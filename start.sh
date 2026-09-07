@@ -8,10 +8,10 @@ set -e
 # 1. Start local Botguard PO Token server on 127.0.0.1:4416 in background
 # Strictly bound to loopback (127.0.0.1) so Render's external router does not capture port 4416
 if [ -f "/app/pot-provider/build/main.js" ]; then
-  echo "🛡️ [POT Provider] Starting local Botguard PO Token server on 127.0.0.1:4416..."
-  HOST=127.0.0.1 PORT=4416 NODE_OPTIONS="--max-old-space-size=64" node /app/pot-provider/build/main.js --host 127.0.0.1 --port 4416 &
+  echo "🛡️ [POT Provider] Starting local Botguard PO Token server on port 4416..."
+  PORT=4416 NODE_OPTIONS="--max-old-space-size=64" node /app/pot-provider/build/main.js --port 4416 &
   POT_PID=$!
-  echo "🛡️ [POT Provider] PID: $POT_PID running in background on 127.0.0.1:4416"
+  echo "🛡️ [POT Provider] PID: $POT_PID running in background on port 4416"
 else
   echo "⚠️ [POT Provider] Build not found at /app/pot-provider/build/main.js — skipping"
 fi
