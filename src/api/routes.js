@@ -225,7 +225,7 @@ export function createRouter(context) {
       const format = req.query.format || 'ba/b/best';
       const jsRuntime = req.query.js || (fs.existsSync('/usr/local/bin/deno') ? 'deno' : 'node');
       const client = req.query.client;
-      const clientArgs = client ? ['--extractor-args', `youtube:player-client=${client}`] : [];
+      const clientArgs = client ? ['--extractor-args', `youtube:player_client=${client}`] : [];
       const ua = req.query.ua !== 'false'
         ? (req.query.ua || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36')
         : null;

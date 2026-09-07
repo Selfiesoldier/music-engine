@@ -32,9 +32,38 @@
       "totalTippedGold": 0,
       "songsPlayed": 0,
       "createdAt": 1788793463111
+    },
+    "6971149c13186cc625d322f6": {
+      "userId": "6971149c13186cc625d322f6",
+      "username": "Death_Stroke5",
+      "tickets": 5,
+      "isVip": false,
+      "vipExpiresAt": null,
+      "lastDailyClaim": 1788795461531,
+      "totalTippedGold": 0,
+      "songsPlayed": 1,
+      "createdAt": 1788795451305
     }
   },
   "transactions": [
+    {
+      "id": "tx_1788795487039_1w68",
+      "userId": "6971149c13186cc625d322f6",
+      "type": "DEBIT",
+      "amount": 1,
+      "details": "Song request: \"Mere Rashke Qamar Song With Lyrics\"",
+      "balanceAfter": 5,
+      "timestamp": 1788795487039
+    },
+    {
+      "id": "tx_1788795461531_m66u",
+      "userId": "6971149c13186cc625d322f6",
+      "type": "DAILY_REWARD",
+      "amount": 6,
+      "details": "Claimed daily reward (6 tickets)",
+      "balanceAfter": 6,
+      "timestamp": 1788795461531
+    },
     {
       "id": "tx_1788793463116_00k8",
       "userId": "697cdd7c49ff745eede3c1b0",

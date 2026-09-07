@@ -194,10 +194,11 @@ export class TrackDownloader {
     const ytdlpArgs = [
       '--no-playlist',
       '-f', '18/ba[ext=m4a]/ba/b/best',
+      '--force-ipv4',
       '--no-warnings',
       '--geo-bypass',
       ...jsRuntimeArgs,
-      '--extractor-args', 'youtube:player_client=android,ios,tv_embedded,web_embedded,web,mweb',
+      '--extractor-args', 'youtube:player_client=android,ios,web,mweb',
       '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
       '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       '--no-check-certificate',
@@ -246,9 +247,9 @@ export class TrackDownloader {
             try {
               if (!proc.killed) proc.kill('SIGKILL');
             } catch (e) {}
-            reject(new Error(`yt-dlp download timed out after 120s for "${metadata.title}"`));
+            reject(new Error(`yt-dlp download timed out after 45s for "${metadata.title}"`));
           }
-        }, 120000);
+        }, 45000);
 
         let stderr = '';
         if (proc.stderr) {
@@ -300,12 +301,9 @@ export class TrackDownloader {
         });
       });
     } catch (dlErr) {
-      if (shouldPassCookies && cookieArgs.length > 0) {
-        console.warn(`🔄 [Downloader] Cookie download failed (${dlErr.message.slice(0, 60)}). Retrying in unauthenticated mode...`);
+      if (shouldPassCookies && cookieArgs.length > 0 && useCookies === null) {
+        console.warn(`🔄 [Downloader] Cookie download failed (${dlErr.message.slice(0, 60)}). Retrying once in unauthenticated mode...`);
         return await this._executeDownload(metadata, false);
-      } else if (!shouldPassCookies && hasCookies) {
-        console.warn(`🔄 [Downloader] Unauthenticated download failed (${dlErr.message.slice(0, 60)}). Retrying with cookies...`);
-        return await this._executeDownload(metadata, true);
       }
       throw dlErr;
     }
