@@ -18,7 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp \
-    && pip3 install --break-system-packages --no-cache-dir -U curl_cffi bgutil-ytdlp-pot-provider
+    && pip3 install --break-system-packages --no-cache-dir -U curl_cffi bgutil-ytdlp-pot-provider \
+    && mkdir -p /usr/local/share/yt-dlp/plugins \
+    && ln -s $(python3 -c "import site; print(site.getsitepackages()[0])")/yt_dlp_plugins /usr/local/share/yt-dlp/plugins/bgutil-ytdlp-pot-provider
 
 WORKDIR /app
 
