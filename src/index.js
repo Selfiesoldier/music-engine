@@ -284,6 +284,21 @@ setInterval(() => {
   } catch (e) {}
 }, 5 * 60 * 1000);
 
+// 5.6. Continuous Server Health & Listener Heartbeat Logger
+setInterval(() => {
+  try {
+    const listenerCount = encoder.clients ? encoder.clients.size : 0;
+    const peakListeners = encoder.stats ? encoder.stats.peakListeners : 0;
+    const statusText = pacer.isPlaying
+      ? `▶️ Playing: "${pacer.currentTrack?.title || 'Unknown'}" [${Math.floor(pacer.getElapsedMs() / 1000)}s]`
+      : queueManager.isPreparing
+        ? `⏳ Preparing: "${queueManager.preparingTrack?.title || 'Unknown'}"`
+        : '💤 Idle (waiting for requests)';
+    const heapMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    console.log(`📻 [Server Status] ${statusText} | Active Listeners: ${listenerCount} (Peak: ${peakListeners}) | Queue: ${queueManager.size()} | Memory: ${heapMb} MB`);
+  } catch (e) {}
+}, 30000);
+
 // 6. Attach REST API Routes
 app.use('/', createRouter(context));
 

@@ -160,8 +160,42 @@ export class TrackDownloader {
       try {
         return await this._executeDownload(metadata);
       } catch (err) {
-        // 1. Fallback: If primary video failed, try YouTube candidates first
-        if (metadata.candidates && metadata.candidates.length > 0) {
+        const isCloudBlock = /sign in|bot|429|403|forbidden|cookie|automated|captcha/i.test(err.message);
+
+        // 1. High-Reliability Cloud Fallback: SoundCloud!
+        // When YouTube blocks cloud datacenter IPs, skip trying more YouTube candidates and jump straight to SoundCloud!
+        if (!metadata.url.includes('soundcloud.com') && !metadata.url.startsWith('scsearch:')) {
+          console.warn(`☁️ [Downloader] YouTube blocked on cloud IP (${err.message.slice(0, 80)}). Falling back to SoundCloud for: "${metadata.title}"...`);
+          try {
+            let query = '';
+            if (metadata.rawTitle) {
+              query = metadata.rawTitle
+                .replace(/^(?:video\s*song|full\s*video(?:\s*song)?|official\s*video|audio\s*song|full\s*song|lyric\s*video)\s*[-:]\s*/i, '')
+                .replace(/[\[\(].*?[\)\]]/g, '')
+                .replace(/[#|//]/g, ' ')
+                .replace(/\b(official|music video|official video|video song|hd|4k)\b/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            }
+            if (!query || query.length < 3) {
+              const cleanArtist = (metadata.artist && !metadata.artist.toLowerCase().includes('video') && metadata.artist !== 'Unknown Artist')
+                ? metadata.artist : '';
+              query = `${metadata.title} ${cleanArtist}`.trim();
+            }
+
+            const scMeta = {
+              ...metadata,
+              title: metadata.title,
+              url: `scsearch1:${query}`
+            };
+            return await this._executeDownload(scMeta, false);
+          } catch (scErr) {
+            console.error(`❌ [Downloader] SoundCloud fallback failed:`, scErr.message.slice(0, 80));
+          }
+        }
+
+        // 2. Fallback: If not an IP block, try YouTube candidates
+        if (!isCloudBlock && metadata.candidates && metadata.candidates.length > 0) {
           const cand = metadata.candidates[0];
           console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying YouTube fallback: "${cand.title}" (${cand.videoId})...`);
           try {
@@ -175,25 +209,6 @@ export class TrackDownloader {
             return await this._executeDownload(candMeta, true);
           } catch (candErr) {
             console.warn(`⚠️ [Downloader] Fallback candidate failed:`, candErr.message.slice(0, 80));
-          }
-        }
-
-        // 2. High-Reliability Cloud Fallback: SoundCloud!
-        // When YouTube blocks cloud datacenter IPs (HTTP 429 / Sign in bot check),
-        // SoundCloud provides 100% reliable audio streaming with zero bot challenges.
-        if (!metadata.url.includes('soundcloud.com') && !metadata.url.startsWith('scsearch:')) {
-          console.warn(`☁️ [Downloader] YouTube blocked on cloud IP (${err.message.slice(0, 70)}). Falling back to SoundCloud for: "${metadata.title}"...`);
-          try {
-            const scSearchQuery = metadata.artist && metadata.artist !== 'Unknown Artist'
-              ? `${metadata.artist} - ${metadata.title}`
-              : metadata.title;
-            const scMeta = {
-              ...metadata,
-              url: `scsearch:${scSearchQuery}`
-            };
-            return await this._executeDownload(scMeta, false);
-          } catch (scErr) {
-            console.error(`❌ [Downloader] SoundCloud fallback failed:`, scErr.message.slice(0, 80));
           }
         }
 
@@ -288,6 +303,7 @@ export class TrackDownloader {
           this.activeProcesses.delete(proc);
         };
 
+        const maxTimeoutMs = isSoundCloud ? 18000 : 25000;
         timeoutId = setTimeout(() => {
           if (!settled) {
             settled = true;
@@ -295,9 +311,9 @@ export class TrackDownloader {
             try {
               if (!proc.killed) proc.kill('SIGKILL');
             } catch (e) {}
-            reject(new Error(`yt-dlp download timed out after 45s for "${metadata.title}"`));
+            reject(new Error(`yt-dlp download timed out after ${maxTimeoutMs / 1000}s for "${metadata.title}"`));
           }
-        }, 45000);
+        }, maxTimeoutMs);
 
         let stderr = '';
         if (proc.stderr) {
@@ -320,15 +336,17 @@ export class TrackDownloader {
               if (matches.length > 0) {
                 const matchedFile = path.join(parentDir, matches[0]);
                 fs.renameSync(matchedFile, outputPath);
-                resolve();
               } else if (fs.existsSync(tempPath)) {
                 fs.renameSync(tempPath, outputPath);
-                resolve();
-              } else if (fs.existsSync(outputPath)) {
-                resolve();
-              } else {
-                reject(new Error(`yt-dlp output file not found for ${tempPath}`));
+              } else if (!fs.existsSync(outputPath)) {
+                return reject(new Error(`yt-dlp output file not found for ${tempPath}`));
               }
+
+              const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+              let sizeMB = '?';
+              try { sizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(2); } catch (e) {}
+              console.log(`✅ [Downloader] Successfully fetched "${metadata.title}" via ${sourceName} in ${durationSec}s (${sizeMB} MB)`);
+              resolve();
             } catch (renameErr) {
               if (fs.existsSync(outputPath)) {
                 resolve();
@@ -337,6 +355,7 @@ export class TrackDownloader {
               }
             }
           } else {
+            console.warn(`⚠️ [Downloader] Failed to fetch "${metadata.title}" via ${sourceName} (code ${code}): ${stderr.slice(-200).trim()}`);
             reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(-300).trim()}`));
           }
         });

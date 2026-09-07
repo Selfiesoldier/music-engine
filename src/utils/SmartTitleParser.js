@@ -35,8 +35,12 @@ export class SmartTitleParser {
     text = text.replace(/[\[\(].*?(official|video|audio|lyrics|music|remix|hd|4k|mv|visualizer|prod\.|produced).*?[\)\]]/gi, '');
     text = text.replace(/[\[\(].*?[\)\]]/g, '');
 
+    // 4.5. Remove leading video/song descriptor prefixes (e.g. "VIDEO SONG - Title")
+    text = text.replace(/^(?:video\s*song|full\s*video(?:\s*song)?|official\s*video|audio\s*song|full\s*song|lyric\s*video)\s*[-:]\s*/i, '');
+    text = text.replace(/#\w+/g, '');
+
     // 5. Remove common marketing buzzwords & years
-    text = text.replace(/\b(official|music video|official video|lyric video|full song|new song|hd|4k)\b/gi, '');
+    text = text.replace(/\b(official|music video|official video|lyric video|full song|new song|video song|hd|4k)\b/gi, '');
     text = text.replace(/\b(202[0-9]|201[0-9])\b/g, '');
 
     let parsedArtist = explicitArtist || cleanRawArtist;

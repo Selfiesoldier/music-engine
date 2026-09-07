@@ -166,6 +166,8 @@ export class PersistentEncoder {
       this.stats.peakListeners = this.clients.size;
     }
 
+    console.log(`🎧 [Stream] Listener connected from ${meta.ip || 'unknown'} | Active listeners: ${this.clients.size} (Peak: ${this.stats.peakListeners})`);
+
     // Send gentle initial audio burst (~1.5s buffer cushion) so new client starts smoothly without buffer bloat
     if (this.audioBuffer.length > 0) {
       try {
@@ -179,8 +181,10 @@ export class PersistentEncoder {
 
     const cleanup = () => {
       if (this.clients.has(res)) {
+        const durationSec = ((Date.now() - meta.connectedAt) / 1000).toFixed(1);
         this.clients.delete(res);
         this.clientMetadata.delete(res);
+        console.log(`🎧 [Stream] Listener disconnected (${meta.ip || 'unknown'}, listened ${durationSec}s) | Active listeners: ${this.clients.size}`);
       }
     };
 
@@ -222,8 +226,10 @@ export class PersistentEncoder {
     }
 
     for (const client of deadClients) {
+      const meta = this.clientMetadata.get(client);
       this.clients.delete(client);
       this.clientMetadata.delete(client);
+      console.log(`⚠️ [Stream] Dropped lagging/frozen listener (${meta?.ip || 'unknown'}) | Active listeners: ${this.clients.size}`);
       try { client.end(); } catch (e) {}
     }
   }
