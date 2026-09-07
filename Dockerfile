@@ -1,4 +1,8 @@
+FROM denoland/deno:bin AS deno_bin
 FROM node:20-bookworm-slim
+
+# Copy official Deno binary (the only JS runtime natively supported by yt-dlp for EJS challenge solving)
+COPY --from=deno_bin /deno /usr/local/bin/deno
 
 # Install system dependencies: FFmpeg, Python3, python3-pip, ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \

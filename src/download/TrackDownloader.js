@@ -187,12 +187,13 @@ export class TrackDownloader {
     const ffmpegDir = path.dirname(CONFIG.FFMPEG_PATH);
     const ffmpegLocationArgs = fs.existsSync(CONFIG.FFMPEG_PATH) ? ['--ffmpeg-location', ffmpegDir] : [];
 
+    const denoArgs = fs.existsSync('/usr/local/bin/deno') ? ['--js-runtimes', 'deno'] : [];
     const ytdlpArgs = [
       '--no-playlist',
       '-f', 'ba/b/best',
       '--no-warnings',
       '--geo-bypass',
-      '--js-runtimes', 'node',
+      ...denoArgs,
       '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       '--no-check-certificate',
       '--socket-timeout', '10',

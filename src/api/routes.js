@@ -156,11 +156,24 @@ export function createRouter(context) {
         } catch (e) { res({ error: e.message }); }
       });
 
+      // Test 3: Run deno directly
+      const denoVersion = await new Promise((res) => {
+        try {
+          const p = spawn('deno', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let o = '';
+          const t = setTimeout(() => { try { p.kill(); } catch (e) {} res({ timeout: true }); }, 3000);
+          p.stdout.on('data', d => o += d.toString());
+          p.on('close', c => { clearTimeout(t); res({ code: c, out: o.trim().split('\n')[0] }); });
+          p.on('error', e => { clearTimeout(t); res({ error: e.message }); });
+        } catch (e) { res({ error: e.message }); }
+      });
+
       const envInfo = {
         platform: process.platform,
         nodeVersion: process.version,
         ffmpeg: CONFIG.FFMPEG_PATH,
         ffmpegExists: fs.existsSync(CONFIG.FFMPEG_PATH),
+        denoExists: fs.existsSync('/usr/local/bin/deno'),
         ytdlpPath: bin,
         ytdlpStat: binStat,
         ytdlpHead: headSample.slice(0, 80),
@@ -172,7 +185,8 @@ export function createRouter(context) {
           ok: true,
           env: envInfo,
           python3: python3Version,
-          directYtdlp: directYtdlp
+          directYtdlp: directYtdlp,
+          deno: denoVersion
         });
       }
 
@@ -209,7 +223,7 @@ export function createRouter(context) {
       const cookieArgs = useCookies ? downloader.cookieShield.getYtdlpCookieArgs() : [];
       const isList = req.query.list === 'true' || req.query.listFormats === 'true';
       const format = req.query.format || 'ba/b/best';
-      const jsRuntime = req.query.js || 'node';
+      const jsRuntime = req.query.js || (fs.existsSync('/usr/local/bin/deno') ? 'deno' : 'node');
       const client = req.query.client;
       const clientArgs = client ? ['--extractor-args', `youtube:player_client=${client}`] : [];
       const ua = req.query.ua !== 'false'
