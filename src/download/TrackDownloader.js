@@ -193,7 +193,7 @@ export class TrackDownloader {
       : ['--js-runtimes', `node:${process.execPath}`];
     const ytdlpArgs = [
       '--no-playlist',
-      '-f', 'ba/b/best',
+      '-f', '18/ba[ext=m4a]/ba/b/best',
       '--no-warnings',
       '--geo-bypass',
       ...jsRuntimeArgs,
@@ -245,9 +245,9 @@ export class TrackDownloader {
             try {
               if (!proc.killed) proc.kill('SIGKILL');
             } catch (e) {}
-            reject(new Error(`yt-dlp download timed out after 60s for "${metadata.title}"`));
+            reject(new Error(`yt-dlp download timed out after 120s for "${metadata.title}"`));
           }
-        }, 60000);
+        }, 120000);
 
         let stderr = '';
         if (proc.stderr) {
