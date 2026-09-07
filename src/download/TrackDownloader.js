@@ -172,16 +172,18 @@ export class TrackDownloader {
     }
   }
 
-  async _executeDownload(metadata, useCookies = false) {
+  async _executeDownload(metadata, useCookies = null) {
     const videoId = metadata.videoId;
-    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${useCookies ? ' (with cookies)' : ' (unauthenticated mode)'}`);
+    const hasCookies = Boolean(this.cookieShield.findMasterCookieFile());
+    const shouldPassCookies = useCookies !== null ? useCookies : hasCookies;
+    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${shouldPassCookies ? ' (with cookies)' : ' (unauthenticated mode)'}`);
     const outputPath = this.audioCache.getTrackPath(videoId);
     const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const tempPath = `${outputPath}.${uniqueId}.tmp`;
 
     try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (e) {}
 
-    const cookieArgs = useCookies ? this.cookieShield.getYtdlpCookieArgs() : [];
+    const cookieArgs = shouldPassCookies ? this.cookieShield.getYtdlpCookieArgs() : [];
     const ffmpegDir = path.dirname(CONFIG.FFMPEG_PATH);
     const ffmpegLocationArgs = fs.existsSync(CONFIG.FFMPEG_PATH) ? ['--ffmpeg-location', ffmpegDir] : [];
 
@@ -190,7 +192,6 @@ export class TrackDownloader {
       '-f', 'ba/b/best',
       '--no-warnings',
       '--geo-bypass',
-      '--extractor-args', 'youtube:player_client=android',
       '--no-check-certificate',
       '--socket-timeout', '10',
       ...ffmpegLocationArgs,
@@ -291,8 +292,11 @@ export class TrackDownloader {
         });
       });
     } catch (dlErr) {
-      if (!useCookies && this.cookieShield.findMasterCookieFile()) {
-        console.warn(`🔄 [Downloader] Fast unauthenticated download failed (${dlErr.message.slice(0, 60)}). Retrying with cookies...`);
+      if (shouldPassCookies && cookieArgs.length > 0) {
+        console.warn(`🔄 [Downloader] Cookie download failed (${dlErr.message.slice(0, 60)}). Retrying in unauthenticated mode...`);
+        return await this._executeDownload(metadata, false);
+      } else if (!shouldPassCookies && hasCookies) {
+        console.warn(`🔄 [Downloader] Unauthenticated download failed (${dlErr.message.slice(0, 60)}). Retrying with cookies...`);
         return await this._executeDownload(metadata, true);
       }
       throw dlErr;

@@ -205,10 +205,12 @@ export function createRouter(context) {
       const videoId = req.query.id || 'dQw4w9WgXcQ';
       const bin = downloader.resolvedYtdlpPath;
       const tempPath = `/tmp/test_${Date.now()}.m4a`;
+      const useCookies = req.query.cookies !== 'false';
+      const cookieArgs = useCookies ? downloader.cookieShield.getYtdlpCookieArgs() : [];
       const args = [
         '-f', 'ba/b/best',
         '--no-warnings',
-        '--extractor-args', 'youtube:player_client=android',
+        ...cookieArgs,
         '-o', tempPath,
         `https://youtube.com/watch?v=${videoId}`
       ];
