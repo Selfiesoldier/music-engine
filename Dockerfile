@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
-# Set up user with UID 1000 for Hugging Face Spaces compatibility
+# Set up non-root user for cloud hosting compatibility
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \
@@ -26,11 +26,13 @@ RUN npm install --omit=dev
 COPY --chown=user . .
 RUN mkdir -p cache/tracks cache/tts
 
-# Hugging Face Spaces routes traffic to port 7860
-ENV PORT=7860
+# Default host and environment
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
 
+# Support Render (10000), HuggingFace (7860), and default (30060)
+EXPOSE 10000
 EXPOSE 7860
+EXPOSE 30060
 
 CMD ["node", "src/index.js"]
