@@ -1,16 +1,13 @@
 FROM node:20-bookworm-slim
 
-# Install system dependencies: FFmpeg, Python3, curl, ca-certificates
+# Install system dependencies: FFmpeg, Python3, python3-pip, ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
-    curl \
+    python3-pip \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install latest yt-dlp binary globally
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages --no-cache-dir -U yt-dlp
 
 WORKDIR /app
 
