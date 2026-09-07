@@ -176,7 +176,9 @@ export class TrackDownloader {
   async _executeDownload(metadata, useCookies = null) {
     const videoId = metadata.videoId;
     const hasCookies = Boolean(this.cookieShield.findMasterCookieFile());
-    const shouldPassCookies = useCookies !== null ? useCookies : hasCookies;
+    // On cloud datacenter IPs, cookies often trigger storyboard-only restricting format 18.
+    // Unauthenticated android client downloads format 18 directly without bot detection!
+    const shouldPassCookies = useCookies !== null ? useCookies : false;
     console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${shouldPassCookies ? ' (with cookies)' : ' (unauthenticated mode)'}`);
     const outputPath = this.audioCache.getTrackPath(videoId);
     const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -198,7 +200,7 @@ export class TrackDownloader {
       '--no-warnings',
       '--geo-bypass',
       ...jsRuntimeArgs,
-      '--extractor-args', 'youtube:player_client=android,ios,web,mweb',
+      '--extractor-args', 'youtube:player_client=android,ios',
       '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
       '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       '--no-check-certificate',
@@ -301,9 +303,14 @@ export class TrackDownloader {
         });
       });
     } catch (dlErr) {
-      if (shouldPassCookies && cookieArgs.length > 0 && useCookies === null) {
-        console.warn(`🔄 [Downloader] Cookie download failed (${dlErr.message.slice(0, 60)}). Retrying once in unauthenticated mode...`);
-        return await this._executeDownload(metadata, false);
+      if (useCookies === null) {
+        if (!shouldPassCookies && hasCookies) {
+          console.warn(`🔄 [Downloader] Unauthenticated download failed (${dlErr.message.slice(0, 70)}). Retrying once with cookies...`);
+          return await this._executeDownload(metadata, true);
+        } else if (shouldPassCookies) {
+          console.warn(`🔄 [Downloader] Cookie download failed (${dlErr.message.slice(0, 70)}). Retrying once in unauthenticated mode...`);
+          return await this._executeDownload(metadata, false);
+        }
       }
       throw dlErr;
     }

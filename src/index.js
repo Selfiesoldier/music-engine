@@ -191,6 +191,7 @@ const context = {
       // 5. Play through pacer - keep isPreparing true until playback starts!
       queueManager.isPreparing = false;
       queueManager.preparingTrack = null;
+      queueManager.lastError = null;
       const finishedNaturally = await pacer.playTrack(
         trackFilePath,
         track,
@@ -205,6 +206,7 @@ const context = {
       }
     } catch (err) {
       console.error(`❌ [Engine] Track preparation failed for "${track.title}":`, err.message);
+      queueManager.lastError = { message: err.message, track: track.title, time: new Date().toISOString() };
       queueManager.isPreparing = false;
       queueManager.preparingTrack = null;
       wsServer.broadcast('track_error', { error: err.message, metadata: track });

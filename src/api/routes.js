@@ -103,6 +103,7 @@ export function createRouter(context) {
       serverElapsed: pacer.getElapsedMs(),
       queueLength: queueManager.size(),
       streamHealth: encoder.getHealth(),
+      lastError: queueManager.lastError || null,
       authRequired: Boolean(CONFIG.API_SECRET)
     });
   });
@@ -341,6 +342,7 @@ export function createRouter(context) {
       transition: transitionManager ? transitionManager.getStatus() : null,
       customTtsQueueLength: context.customTtsQueue?.length || 0,
       authRequired: Boolean(CONFIG.API_SECRET),
+      lastError: queueManager.lastError || null,
       tunnel: {
         active: Boolean(tunnelManager?.getPublicUrl()),
         publicUrl: tunnelManager ? tunnelManager.getPublicUrl() : null,

@@ -213,6 +213,7 @@
         <small style="color: var(--text-muted)">v3.0 Modular Architecture • Hyper-Fast Auto-Reconnect</small>
       </div>
       <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <div id="authBadge" class="badge" style="cursor: pointer;" onclick="promptApiKey()" title="Click to configure API Key">🔑 Auth Checking...</div>
         <div id="publicUrlBadge" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border-color: rgba(129, 140, 248, 0.3); cursor: pointer; display: none;" onclick="copyPublicUrl()" title="Click to copy Highrise Stream URL">🌐 Highrise URL (Click to Copy)</div>
         <div id="djSpeakingBadge" class="badge badge-dj">🎙️ DJ Speaking...</div>
         <div id="statusBadge" class="badge">● Streaming Live</div>
@@ -327,6 +328,84 @@
     let userWantsAudio = false;
     let isReconnecting = false;
     let sseClient = null;
+
+    let currentApiKey = localStorage.getItem('musicbot_api_key') || 'highrise_music_secret_2026';
+
+    function getStoredApiKey() {
+      const p = new URLSearchParams(window.location.search);
+      const urlKey = p.get('key') || p.get('token') || p.get('apiKey');
+      if (urlKey) {
+        currentApiKey = urlKey;
+        localStorage.setItem('musicbot_api_key', urlKey);
+      }
+      return currentApiKey;
+    }
+
+    async function promptApiKey() {
+      const entered = prompt('🔑 Enter API Secret Key:', currentApiKey);
+      if (entered !== null) {
+        currentApiKey = entered.trim();
+        localStorage.setItem('musicbot_api_key', currentApiKey);
+        await updateAuthBadge();
+      }
+    }
+
+    async function updateAuthBadge() {
+      const badge = document.getElementById('authBadge');
+      if (!badge) return;
+      try {
+        const res = await fetch('/api/auth/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.authRequired) {
+            badge.textContent = '🔓 Open Mode';
+            badge.style.borderColor = 'rgba(63, 185, 80, 0.3)';
+            badge.style.color = '#3fb950';
+            return;
+          }
+        }
+        const key = getStoredApiKey();
+        const vRes = await fetch('/api/auth/verify', {
+          headers: { 'x-api-key': key }
+        });
+        if (vRes.ok) {
+          badge.textContent = '🔑 Authorized';
+          badge.style.borderColor = 'rgba(63, 185, 80, 0.3)';
+          badge.style.color = '#3fb950';
+        } else {
+          badge.textContent = '🔒 Set Key';
+          badge.style.borderColor = '#ef4444';
+          badge.style.color = '#ef4444';
+        }
+      } catch (e) {
+        badge.textContent = '🔑 Auth';
+      }
+    }
+
+    async function apiFetch(url, options = {}) {
+      options.headers = options.headers || {};
+      const key = getStoredApiKey();
+      if (key) {
+        options.headers['x-api-key'] = key;
+      }
+      try {
+        const res = await fetch(url, options);
+        if (res.status === 401) {
+          const keyPrompt = prompt('🔒 Authentication required. Enter API Key:');
+          if (keyPrompt) {
+            currentApiKey = keyPrompt.trim();
+            localStorage.setItem('musicbot_api_key', currentApiKey);
+            options.headers['x-api-key'] = currentApiKey;
+            updateAuthBadge();
+            return await fetch(url, options);
+          }
+        }
+        return res;
+      } catch (err) {
+        console.error('Fetch error:', err);
+        throw err;
+      }
+    }
 
     const audio = document.getElementById('audioPlayer');
     const statusBadge = document.getElementById('statusBadge');
@@ -573,24 +652,42 @@
     }
 
     async function playSong() {
-      const q = document.getElementById('searchInput').value.trim();
+      const input = document.getElementById('searchInput');
+      const q = input.value.trim();
       if (!q) return;
-      document.getElementById('searchInput').value = '';
-      await apiFetch('/api/play', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q })
-      });
+      input.value = '';
+      showDjToast(`🔍 Requesting: "${q}"...`);
+      try {
+        const res = await apiFetch('/api/play', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, requester: 'Web Portal' })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showDjToast(`🎵 Queued: ${data.metadata?.title || q}`);
+        } else {
+          showDjToast(`❌ ${data.error || 'Failed to queue song'}`);
+        }
+      } catch (err) {
+        showDjToast(`❌ Network error: ${err.message}`);
+      }
       setTimeout(updateStatus, 500);
     }
 
     async function skipTrack() {
-      await apiFetch('/api/skip', { method: 'POST' });
+      showDjToast('⏭️ Skipping current track...');
+      try {
+        await apiFetch('/api/skip', { method: 'POST' });
+      } catch (e) {}
       setTimeout(updateStatus, 500);
     }
 
     async function stopTrack() {
-      await apiFetch('/api/stop', { method: 'POST' });
+      showDjToast('⏹️ Stopped playback.');
+      try {
+        await apiFetch('/api/stop', { method: 'POST' });
+      } catch (e) {}
       setTimeout(updateStatus, 500);
     }
 
@@ -598,6 +695,7 @@
     setInterval(updateStatus, 1000);
     setupSSE();
     updateStatus();
+    updateAuthBadge();
     initElevenLabsStatus();
   </script>
 </body>
