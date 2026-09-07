@@ -324,7 +324,12 @@ export function createRouter(context) {
 
   // 5. Skip Track
   router.post('/api/skip', requireAuth, (req, res) => {
-    const currentTitle = pacer.currentTrack?.title || 'Unknown';
+    const currentTitle = pacer.currentTrack?.title || queueManager.preparingTrack?.title || 'Unknown';
+    queueManager.isPreparing = false;
+    queueManager.preparingTrack = null;
+    if (downloader && typeof downloader.abortAll === 'function') {
+      downloader.abortAll();
+    }
     pacer.stopCurrentStream();
     context.playNext();
     res.json({ status: 'skipped', skippedTrack: currentTitle });
@@ -333,6 +338,11 @@ export function createRouter(context) {
   // 6. Stop Track & Clear Queue
   router.post('/api/stop', requireAuth, (req, res) => {
     queueManager.clear();
+    queueManager.isPreparing = false;
+    queueManager.preparingTrack = null;
+    if (downloader && typeof downloader.abortAll === 'function') {
+      downloader.abortAll();
+    }
     pacer.stopCurrentStream();
     wsServer.broadcast('playback_stopped');
     res.json({ status: 'stopped', message: 'Playback stopped and queue cleared' });

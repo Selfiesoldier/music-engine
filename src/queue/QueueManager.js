@@ -55,6 +55,8 @@ export class QueueManager {
 
   clear() {
     this.queue = [];
+    this.isPreparing = false;
+    this.preparingTrack = null;
     this.saveState();
   }
 

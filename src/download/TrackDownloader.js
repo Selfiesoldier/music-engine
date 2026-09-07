@@ -173,9 +173,9 @@ export class TrackDownloader {
     }
   }
 
-  async _executeDownload(metadata, useCookies = true) {
+  async _executeDownload(metadata, useCookies = false) {
     const videoId = metadata.videoId;
-    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${useCookies ? '' : ' (no-cookies mode)'}`);
+    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${useCookies ? ' (with cookies)' : ' (unauthenticated mode)'}`);
     const outputPath = this.audioCache.getTrackPath(videoId);
     const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const tempPath = `${outputPath}.${uniqueId}.tmp`;
@@ -222,16 +222,39 @@ export class TrackDownloader {
           } catch (e) {}
         }
 
-        const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        // CRITICAL: stdio ignore stdout so pipe buffer does not fill and deadlock child process!
+        const proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
         this.activeProcesses.add(proc);
 
-        const removeProc = () => this.activeProcesses.delete(proc);
-        proc.on('close', removeProc);
-        proc.on('error', removeProc);
+        let timeoutId = null;
+        let settled = false;
+
+        const cleanup = () => {
+          if (timeoutId) clearTimeout(timeoutId);
+          this.activeProcesses.delete(proc);
+        };
+
+        timeoutId = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            try {
+              if (!proc.killed) proc.kill('SIGKILL');
+            } catch (e) {}
+            reject(new Error(`yt-dlp download timed out after 35s for "${metadata.title}"`));
+          }
+        }, 35000);
 
         let stderr = '';
-        proc.stderr.on('data', d => stderr += d.toString());
+        if (proc.stderr) {
+          proc.stderr.on('data', d => stderr += d.toString());
+        }
+
         proc.on('close', code => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+
           if (code === 0) {
             try {
               const parentDir = path.dirname(tempPath);
@@ -263,12 +286,18 @@ export class TrackDownloader {
             reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(-300).trim()}`));
           }
         });
-        proc.on('error', reject);
+
+        proc.on('error', err => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(err);
+        });
       });
     } catch (dlErr) {
-      if (useCookies && cookieArgs.length > 0) {
-        console.warn(`🔄 [Downloader] Failed with cookies (${dlErr.message.slice(0, 60)}). Retrying via android/ios client without cookies...`);
-        return await this._executeDownload(metadata, false);
+      if (!useCookies && this.cookieShield.findMasterCookieFile()) {
+        console.warn(`🔄 [Downloader] Fast unauthenticated download failed (${dlErr.message.slice(0, 60)}). Retrying with cookies...`);
+        return await this._executeDownload(metadata, true);
       }
       throw dlErr;
     }
@@ -283,9 +312,10 @@ export class TrackDownloader {
     throw new Error('Track download produced no output file');
   }
 
-  destroy() {
+  abortAll() {
+    this.inFlightDownloads.clear();
     if (this.activeProcesses.size > 0) {
-      console.log(`🛑 [Downloader] Terminating ${this.activeProcesses.size} active download process(es)...`);
+      console.log(`🛑 [Downloader] Aborting ${this.activeProcesses.size} active download process(es)...`);
       for (const proc of this.activeProcesses) {
         try {
           proc.removeAllListeners('close');
@@ -296,5 +326,9 @@ export class TrackDownloader {
       this.activeProcesses.clear();
     }
     this.audioCache.cleanTransients();
+  }
+
+  destroy() {
+    this.abortAll();
   }
 }
