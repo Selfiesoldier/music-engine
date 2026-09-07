@@ -115,19 +115,64 @@ export function createRouter(context) {
   // Diagnostic endpoint to debug yt-dlp on Render
   router.get('/api/debug-download', async (req, res) => {
     try {
-      const q = req.query.q || 'Kaun Talha';
-      const meta = await downloader.resolveMetadata(q);
+      const isVersionOnly = req.query.versionOnly === 'true' || req.query.fast === 'true';
+      const bin = downloader.resolvedYtdlpPath;
+      
       const testResult = await new Promise((resolve) => {
-        const bin = downloader.resolvedYtdlpPath;
-        const proc = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let isPython = false;
+        let execBin = bin;
+        let args = ['--version'];
+        if (!bin.endsWith('.exe') && fs.existsSync(bin)) {
+          try {
+            const head = fs.readFileSync(bin, { encoding: 'utf-8', flag: 'r' }).slice(0, 100);
+            if (head.includes('python')) {
+              isPython = true;
+              execBin = 'python3';
+              args = [bin, '--version'];
+            }
+          } catch (e) {}
+        }
+
+        const proc = spawn(execBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
         let err = '';
+        const t = setTimeout(() => {
+          try { proc.kill('SIGKILL'); } catch (e) {}
+          resolve({ execBin, bin, timeout: true, out: out.trim(), err: err.trim() });
+        }, 5000);
+
         proc.stdout.on('data', d => out += d.toString());
         proc.stderr.on('data', d => err += d.toString());
-        proc.on('close', code => resolve({ bin, code, out: out.trim(), err: err.trim() }));
-        proc.on('error', e => resolve({ bin, error: e.message }));
+        proc.on('close', code => {
+          clearTimeout(t);
+          resolve({ execBin, bin, code, out: out.trim(), err: err.trim() });
+        });
+        proc.on('error', e => {
+          clearTimeout(t);
+          resolve({ execBin, bin, error: e.message });
+        });
       });
 
+      const envInfo = {
+        platform: process.platform,
+        nodeVersion: process.version,
+        ffmpeg: CONFIG.FFMPEG_PATH,
+        ffmpegExists: fs.existsSync(CONFIG.FFMPEG_PATH),
+        ytdlpPath: downloader.resolvedYtdlpPath,
+        ytdlpExists: fs.existsSync(downloader.resolvedYtdlpPath),
+        hasCookies: Boolean(downloader.cookieShield.findMasterCookieFile())
+      };
+
+      if (isVersionOnly) {
+        return res.json({
+          ok: true,
+          env: envInfo,
+          versionCheck: testResult
+        });
+      }
+
+      const q = req.query.q || 'Kaun Talha';
+      const meta = await downloader.resolveMetadata(q);
       let dlResult = null;
       try {
         const dlPath = await downloader._executeDownload(meta, false);
@@ -138,15 +183,7 @@ export function createRouter(context) {
 
       res.json({
         ok: true,
-        env: {
-          platform: process.platform,
-          nodeVersion: process.version,
-          ffmpeg: CONFIG.FFMPEG_PATH,
-          ffmpegExists: fs.existsSync(CONFIG.FFMPEG_PATH),
-          ytdlpPath: downloader.resolvedYtdlpPath,
-          ytdlpExists: fs.existsSync(downloader.resolvedYtdlpPath),
-          hasCookies: Boolean(downloader.cookieShield.findMasterCookieFile())
-        },
+        env: envInfo,
         versionCheck: testResult,
         metadata: meta,
         downloadAttempt: dlResult

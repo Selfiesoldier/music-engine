@@ -143,22 +143,21 @@ export class TrackDownloader {
       try {
         return await this._executeDownload(metadata);
       } catch (err) {
-        // Fallback: If primary video was blocked, region-restricted, or format failed, try fallback candidates!
+        // Fallback: If primary video was blocked, region-restricted, or format failed, try 1 candidate!
         if (metadata.candidates && metadata.candidates.length > 0) {
-          for (const cand of metadata.candidates) {
-            console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying candidate: "${cand.title}" (${cand.videoId})...`);
-            try {
-              const candMeta = {
-                ...metadata,
-                videoId: cand.videoId,
-                url: cand.url || `https://youtube.com/watch?v=${cand.videoId}`,
-                title: cand.title,
-                candidates: []
-              };
-              return await this._executeDownload(candMeta);
-            } catch (candErr) {
-              console.warn(`⚠️ [Downloader] Candidate ${cand.videoId} failed:`, candErr.message.slice(0, 80));
-            }
+          const cand = metadata.candidates[0];
+          console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying fallback: "${cand.title}" (${cand.videoId})...`);
+          try {
+            const candMeta = {
+              ...metadata,
+              videoId: cand.videoId,
+              url: cand.url || `https://youtube.com/watch?v=${cand.videoId}`,
+              title: cand.title,
+              candidates: []
+            };
+            return await this._executeDownload(candMeta, false);
+          } catch (candErr) {
+            console.warn(`⚠️ [Downloader] Fallback candidate failed:`, candErr.message.slice(0, 80));
           }
         }
         throw err;
@@ -191,10 +190,7 @@ export class TrackDownloader {
       '-f', 'ba/b/best',
       '--no-warnings',
       '--geo-bypass',
-      '--force-ipv4',
-      '--js-runtimes', 'node',
-      '--extractor-args', 'youtube:player_client=android,ios',
-      '--concurrent-fragments', '4',
+      '--extractor-args', 'youtube:player_client=android',
       '--no-check-certificate',
       '--socket-timeout', '10',
       ...ffmpegLocationArgs,
@@ -241,9 +237,9 @@ export class TrackDownloader {
             try {
               if (!proc.killed) proc.kill('SIGKILL');
             } catch (e) {}
-            reject(new Error(`yt-dlp download timed out after 35s for "${metadata.title}"`));
+            reject(new Error(`yt-dlp download timed out after 15s for "${metadata.title}"`));
           }
-        }, 35000);
+        }, 15000);
 
         let stderr = '';
         if (proc.stderr) {
