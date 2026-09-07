@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages --no-cache-dir -U "yt-dlp[default]" curl_cffi bgutil-ytdlp-pot-provider
+    && pip3 install --break-system-packages --no-cache-dir -U yt-dlp curl_cffi bgutil-ytdlp-pot-provider
 
 WORKDIR /app
 
@@ -33,7 +33,7 @@ RUN cp yt-dlp.conf /etc/yt-dlp.conf
 RUN mkdir -p cache/tracks cache/tts && chmod +x start.sh
 
 # Enforce Node memory boundary (160 MB) for 512 MB cloud hosts
-ENV NODE_OPTIONS="--max-old-space-size=160 --expose-gc"
+ENV NODE_OPTIONS="--max-old-space-size=128 --expose-gc"
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
 

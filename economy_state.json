@@ -10,9 +10,49 @@
       "totalTippedGold": 10,
       "songsPlayed": 2,
       "createdAt": 1788715794421
+    },
+    "68b7bd9c318574dd13b05689": {
+      "userId": "68b7bd9c318574dd13b05689",
+      "username": "Demon_King.18",
+      "tickets": 10,
+      "isVip": false,
+      "vipExpiresAt": null,
+      "lastDailyClaim": 1788793396339,
+      "totalTippedGold": 0,
+      "songsPlayed": 0,
+      "createdAt": 1788793396337
+    },
+    "697cdd7c49ff745eede3c1b0": {
+      "userId": "697cdd7c49ff745eede3c1b0",
+      "username": "Dreamymoonlight",
+      "tickets": 7,
+      "isVip": false,
+      "vipExpiresAt": null,
+      "lastDailyClaim": 1788793463116,
+      "totalTippedGold": 0,
+      "songsPlayed": 0,
+      "createdAt": 1788793463111
     }
   },
   "transactions": [
+    {
+      "id": "tx_1788793463116_00k8",
+      "userId": "697cdd7c49ff745eede3c1b0",
+      "type": "DAILY_REWARD",
+      "amount": 7,
+      "details": "Claimed daily reward (7 tickets)",
+      "balanceAfter": 7,
+      "timestamp": 1788793463116
+    },
+    {
+      "id": "tx_1788793396340_wjyi",
+      "userId": "68b7bd9c318574dd13b05689",
+      "type": "DAILY_REWARD",
+      "amount": 10,
+      "details": "Claimed daily reward (10 tickets)",
+      "balanceAfter": 10,
+      "timestamp": 1788793396340
+    },
     {
       "id": "tx_1788724461789_ui20",
       "userId": "6a7adddacc3fa67f5530833c",
