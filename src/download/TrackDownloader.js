@@ -78,6 +78,23 @@ export class TrackDownloader {
     let video = null;
     let candidates = [];
 
+    if (query.includes('soundcloud.com')) {
+      const cleanSlug = query.split('/').pop().replace(/[^a-zA-Z0-9_-]/g, ' ').trim();
+      const scHash = Buffer.from(query).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 11);
+      return {
+        videoId: `sc_${scHash}`,
+        url: query,
+        title: cleanSlug || 'SoundCloud Track',
+        rawTitle: cleanSlug || 'SoundCloud Track',
+        artist: 'SoundCloud',
+        rawArtist: 'SoundCloud',
+        duration: '3:30',
+        durationSeconds: 210,
+        thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300',
+        candidates: []
+      };
+    }
+
     if (/^[a-zA-Z0-9_-]{11}$/.test(query.trim())) {
       try {
         video = await yts({ videoId: query.trim() });
@@ -143,7 +160,7 @@ export class TrackDownloader {
       try {
         return await this._executeDownload(metadata);
       } catch (err) {
-        // Fallback: If primary video was blocked, region-restricted, or format failed, try YouTube candidates!
+        // 1. Fallback: If primary video failed, try YouTube candidates first
         if (metadata.candidates && metadata.candidates.length > 0) {
           const cand = metadata.candidates[0];
           console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying YouTube fallback: "${cand.title}" (${cand.videoId})...`);
@@ -161,6 +178,25 @@ export class TrackDownloader {
           }
         }
 
+        // 2. High-Reliability Cloud Fallback: SoundCloud!
+        // When YouTube blocks cloud datacenter IPs (HTTP 429 / Sign in bot check),
+        // SoundCloud provides 100% reliable audio streaming with zero bot challenges.
+        if (!metadata.url.includes('soundcloud.com') && !metadata.url.startsWith('scsearch:')) {
+          console.warn(`☁️ [Downloader] YouTube blocked on cloud IP (${err.message.slice(0, 70)}). Falling back to SoundCloud for: "${metadata.title}"...`);
+          try {
+            const scSearchQuery = metadata.artist && metadata.artist !== 'Unknown Artist'
+              ? `${metadata.artist} - ${metadata.title}`
+              : metadata.title;
+            const scMeta = {
+              ...metadata,
+              url: `scsearch:${scSearchQuery}`
+            };
+            return await this._executeDownload(scMeta, false);
+          } catch (scErr) {
+            console.error(`❌ [Downloader] SoundCloud fallback failed:`, scErr.message.slice(0, 80));
+          }
+        }
+
         throw err;
       }
     })();
@@ -175,11 +211,13 @@ export class TrackDownloader {
 
   async _executeDownload(metadata, useCookies = null) {
     const videoId = metadata.videoId;
+    const isSoundCloud = metadata.url.includes('soundcloud.com') || metadata.url.startsWith('scsearch:');
+    const sourceName = isSoundCloud ? 'SoundCloud' : 'YouTube';
     const hasCookies = Boolean(this.cookieShield.findMasterCookieFile());
     // On cloud datacenter IPs, cookies often trigger storyboard-only restricting format 18.
     // Unauthenticated android client downloads format 18 directly without bot detection!
-    const shouldPassCookies = useCookies !== null ? useCookies : false;
-    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${shouldPassCookies ? ' (with cookies)' : ' (unauthenticated mode)'}`);
+    const shouldPassCookies = (!isSoundCloud && useCookies !== null) ? useCookies : false;
+    console.log(`📥 [Downloader] Fetching audio from ${sourceName} for: "${metadata.title}"${shouldPassCookies ? ' (with cookies)' : ' (unauthenticated mode)'}`);
     const outputPath = this.audioCache.getTrackPath(videoId);
     const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const tempPath = `${outputPath}.${uniqueId}.tmp`;
@@ -193,15 +231,23 @@ export class TrackDownloader {
     const jsRuntimeArgs = fs.existsSync('/usr/local/bin/deno')
       ? ['--js-runtimes', 'deno']
       : ['--js-runtimes', `node:${process.execPath}`];
+
+    const extractorArgs = isSoundCloud
+      ? []
+      : [
+          '--extractor-args', 'youtube:player_client=android,ios',
+          '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
+        ];
+    const formatArg = isSoundCloud ? 'bestaudio/best' : '18/ba[ext=m4a]/ba/b/best';
+
     const ytdlpArgs = [
       '--no-playlist',
-      '-f', '18/ba[ext=m4a]/ba/b/best',
+      '-f', formatArg,
       '--force-ipv4',
       '--no-warnings',
       '--geo-bypass',
       ...jsRuntimeArgs,
-      '--extractor-args', 'youtube:player_client=android,ios',
-      '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
+      ...extractorArgs,
       '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       '--no-check-certificate',
       '--socket-timeout', '10',
