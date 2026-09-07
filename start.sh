@@ -8,7 +8,7 @@ set -e
 # 1. Start local Botguard PO Token server on port 4416 (for yt-dlp)
 if [ -f "/app/pot-provider/build/main.js" ]; then
   echo "🛡️ [POT Provider] Starting local Botguard PO Token server on port 4416..."
-  node /app/pot-provider/build/main.js &
+  node /app/pot-provider/build/main.js -H 127.0.0.1 &
   sleep 1
 fi
 

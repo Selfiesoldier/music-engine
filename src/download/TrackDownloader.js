@@ -197,7 +197,7 @@ export class TrackDownloader {
       '--no-warnings',
       '--geo-bypass',
       ...jsRuntimeArgs,
-      '--extractor-args', 'youtube:player-client=ios,android,mweb,web_embedded,default',
+      '--extractor-args', 'youtube:player-client=web_embedded,web,mweb,android,ios',
       '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       '--no-check-certificate',
       '--socket-timeout', '10',
