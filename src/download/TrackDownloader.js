@@ -143,7 +143,7 @@ export class TrackDownloader {
       try {
         return await this._executeDownload(metadata);
       } catch (err) {
-        // Fallback: If primary video was blocked, region-restricted, or format failed, try 1 candidate!
+        // Fallback 1: If primary video was blocked, region-restricted, or format failed, try 1 candidate!
         if (metadata.candidates && metadata.candidates.length > 0) {
           const cand = metadata.candidates[0];
           console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying fallback: "${cand.title}" (${cand.videoId})...`);
@@ -160,6 +160,21 @@ export class TrackDownloader {
             console.warn(`⚠️ [Downloader] Fallback candidate failed:`, candErr.message.slice(0, 80));
           }
         }
+
+        // Fallback 2: SoundCloud High-Speed Audio Bridge (Zero bot-blocks, zero cookies needed, 100% cloud-friendly)
+        const scQuery = `${metadata.artist && metadata.artist !== 'Unknown Artist' ? `${metadata.artist} - ` : ''}${metadata.title}`;
+        console.log(`🌐 [Downloader] YouTube restricted. Engaging SoundCloud audio bridge for: "${scQuery}"...`);
+        try {
+          const scMeta = {
+            ...metadata,
+            url: `scsearch1:${scQuery}`,
+            candidates: []
+          };
+          return await this._executeDownload(scMeta, false);
+        } catch (scErr) {
+          console.warn(`⚠️ [Downloader] SoundCloud bridge failed:`, scErr.message.slice(0, 80));
+        }
+
         throw err;
       }
     })();

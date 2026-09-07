@@ -232,6 +232,10 @@ export function createRouter(context) {
       const uaArgs = ua ? ['--user-agent', ua] : [];
       const verboseArgs = req.query.verbose === 'true' ? ['--verbose'] : [];
 
+      const targetUrl = req.query.url || (req.query.id && (req.query.id.startsWith('http') || req.query.id.includes(':'))
+        ? req.query.id
+        : `https://youtube.com/watch?v=${req.query.id || 'dQw4w9WgXcQ'}`);
+
       const args = isList
         ? [
             '-F',
@@ -242,7 +246,7 @@ export function createRouter(context) {
             ...uaArgs,
             ...verboseArgs,
             ...cookieArgs,
-            `https://youtube.com/watch?v=${videoId}`
+            targetUrl
           ]
         : [
             '-f', format,
@@ -255,7 +259,7 @@ export function createRouter(context) {
             ...verboseArgs,
             ...cookieArgs,
             '-o', tempPath,
-            `https://youtube.com/watch?v=${videoId}`
+            targetUrl
           ];
 
       const t0 = Date.now();
