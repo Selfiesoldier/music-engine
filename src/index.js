@@ -122,6 +122,17 @@ const context = {
     // 1. Start downloading the track in the background immediately!
     const downloadPromise = downloader.downloadTrack(track);
 
+    // 1.5. Pre-synthesize DJ intro in parallel with download!
+    let introPromise = null;
+    if (queueManager.djIntroEnabled) {
+      try {
+        const introText = ttsEngine.getIntroText(track);
+        introPromise = ttsEngine.synthesize(introText, queueManager.djVoice)
+          .then(file => ({ file, text: introText }))
+          .catch(() => null);
+      } catch (e) {}
+    }
+
     try {
       // 2. Play pending custom user TTS if explicitly requested via /tts
       if (customTtsQueue.length > 0) {
@@ -136,58 +147,40 @@ const context = {
         }
       }
 
-      // 3. Await YouTube download
+      // 3. Await audio download
       const trackFilePath = await downloadPromise;
-
-      // 4. Track Announcement Priority:
-      // If DJ Song Intro is enabled, announce the song! (Never let generic TT drops block the intro)
-      // If DJ Song Intro is disabled, play a transition bumper (TT) from the pool.
-      if (queueManager.djIntroEnabled) {
-        try {
-          const introText = ttsEngine.getIntroText(track);
-          console.log(`🎙️ [DJ Intro] "${introText}" (Voice: ${queueManager.djVoice})`);
-          wsServer.broadcast('dj_speaking', {
-            text: introText,
-            voice: queueManager.djVoice,
-            mode: 'intro'
-          });
-          const introFile = await ttsEngine.synthesize(introText, queueManager.djVoice);
-          if (introFile) {
-            await pacer.overlaySpeech(introFile, true);
-          }
-        } catch (ttsErr) {
-          console.warn('⚠️ [DJ Intro] Failed to speak intro, continuing to song:', ttsErr?.message || ttsErr || 'TTS engine unavailable');
-        }
-      } else if (transitionManager && transitionManager.enabled && transitionManager.phrases.length > 0) {
-        // Only play transition tt if DJ song intro is disabled
-        try {
-          const phrase = transitionManager.getRandomPhrase();
-          if (phrase) {
-            console.log(`📻 [Transition TTS Between Songs] "${phrase}" (Voice: ${queueManager.djVoice})`);
-            wsServer.broadcast('transition_tts_speaking', {
-              phrase,
-              voice: queueManager.djVoice
-            });
-            const audioFile = await ttsEngine.synthesize(phrase, queueManager.djVoice);
-            await pacer.overlaySpeech(audioFile, true);
-          }
-        } catch (ttErr) {
-          console.warn('⚠️ [Transition TTS Between Songs Error]:', ttErr.message);
-        }
-      }
-
-      // 5. Ensure all voice overlay has completely finished before playing song PCM!
-      await pacer.waitForSpeechToFinish();
 
       wsServer.broadcast('track_started', {
         metadata: track,
         filter: queueManager.activeFilter
       });
 
-      // 5. Play through pacer - keep isPreparing true until playback starts!
       queueManager.isPreparing = false;
       queueManager.preparingTrack = null;
       queueManager.lastError = null;
+
+      // 4. ⚡ Instant 0.0s Transitions: Pre-fetch next track in queue in background!
+      const nextTrack = queueManager.peek();
+      if (nextTrack) {
+        console.log(`⚡ [Pre-fetch] Background caching next queued track: "${nextTrack.title}"...`);
+        downloader.downloadTrack(nextTrack).catch(() => {});
+      }
+
+      // 5. Radio-Style DJ Intro: Speak OVER the opening beats of the song with music ducking!
+      if (introPromise) {
+        introPromise.then(intro => {
+          if (intro?.file) {
+            console.log(`🎙️ [DJ Intro Overlay] "${intro.text}" (Voice: ${queueManager.djVoice})`);
+            wsServer.broadcast('dj_speaking', {
+              text: intro.text,
+              voice: queueManager.djVoice,
+              mode: 'intro'
+            });
+            pacer.overlaySpeech(intro.file, false);
+          }
+        }).catch(() => {});
+      }
+
       const finishedNaturally = await pacer.playTrack(
         trackFilePath,
         track,

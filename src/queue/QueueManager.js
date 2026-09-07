@@ -53,6 +53,10 @@ export class QueueManager {
     return next || null;
   }
 
+  peek() {
+    return this.queue.length > 0 ? this.queue[0] : null;
+  }
+
   clear() {
     this.queue = [];
     this.isPreparing = false;

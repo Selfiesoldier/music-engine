@@ -483,12 +483,9 @@ export function createRouter(context) {
 
       // If actively playing or preparing a track, queue it behind the current track
       if (pacer.isPlaying || queueManager.isPreparing) {
-        // 👑 Human Priority: If currently playing OR preparing track is AUTOPLAY, preempt it immediately!
+        // 👑 Human Priority: If currently playing OR preparing track is AUTOPLAY, preempt it cleanly without gap!
         if (!metadata.isAutoplay && (pacer.currentTrack?.isAutoplay || queueManager.preparingTrack?.isAutoplay)) {
           console.log(`👑 [Human Request Priority] Preempting autoplay track for "${metadata.title}" (Requester: ${metadata.requester})`);
-          pacer.stopCurrentStream();
-          queueManager.isPreparing = false;
-          queueManager.preparingTrack = null;
           res.json({ status: 'playing', metadata, economy: economyStatus });
           context.playNext(metadata);
           return;

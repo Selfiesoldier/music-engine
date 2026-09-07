@@ -14,6 +14,44 @@ export class TrackDownloader {
     this.resolvedYtdlpPath = this.resolveYtdlp();
     this.activeProcesses = new Set();
     this.inFlightDownloads = new Map();
+    this.youtubeBlockedUntil = (process.env.RENDER || process.env.IS_RENDER || process.env.CLOUD_ENV)
+      ? Date.now() + 24 * 60 * 60 * 1000
+      : 0;
+  }
+
+  isYoutubeBlocked() {
+    if (process.env.RENDER || process.env.IS_RENDER || process.env.CLOUD_ENV) return true;
+    return Boolean(this.youtubeBlockedUntil && Date.now() < this.youtubeBlockedUntil);
+  }
+
+  markYoutubeBlocked() {
+    this.youtubeBlockedUntil = Date.now() + 60 * 60 * 1000;
+    console.warn('🛡️ [Downloader] YouTube marked blocked (cloud IP rate-limit). Direct SoundCloud fast-path active.');
+  }
+
+  async _downloadViaSoundCloud(metadata) {
+    let query = '';
+    if (metadata.rawTitle) {
+      query = metadata.rawTitle
+        .replace(/^(?:video\s*song|full\s*video(?:\s*song)?|official\s*video|audio\s*song|full\s*song|lyric\s*video)\s*[-:]\s*/i, '')
+        .replace(/[\[\(].*?[\)\]]/g, '')
+        .replace(/[#|//]/g, ' ')
+        .replace(/\b(official|music video|official video|video song|hd|4k)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    if (!query || query.length < 3) {
+      const cleanArtist = (metadata.artist && !metadata.artist.toLowerCase().includes('video') && metadata.artist !== 'Unknown Artist')
+        ? metadata.artist : '';
+      query = `${metadata.title} ${cleanArtist}`.trim();
+    }
+
+    const scMeta = {
+      ...metadata,
+      title: metadata.title,
+      url: `scsearch1:${query}`
+    };
+    return await this._executeDownload(scMeta, false);
   }
 
   resolveYtdlp() {
@@ -156,39 +194,35 @@ export class TrackDownloader {
       return await this.inFlightDownloads.get(videoId);
     }
 
+    const isDirectSoundCloud = metadata.url.includes('soundcloud.com') || metadata.url.startsWith('scsearch:');
+    const shouldFastTrackSoundCloud = !isDirectSoundCloud && this.isYoutubeBlocked();
+
     const downloadPromise = (async () => {
+      // ⚡ Direct Cloud Fast-Track:
+      // When YouTube is blocked on cloud IP, route directly to SoundCloud in 2-4 seconds!
+      if (shouldFastTrackSoundCloud) {
+        console.log(`⚡ [Downloader] Fast-Track: Fetching "${metadata.title}" directly via SoundCloud (2-4s)...`);
+        try {
+          return await this._downloadViaSoundCloud(metadata);
+        } catch (scErr) {
+          console.warn(`⚠️ [Downloader] Fast-track SoundCloud failed (${scErr.message.slice(0, 60)}). Trying YouTube fallback...`);
+        }
+      }
+
       try {
         return await this._executeDownload(metadata);
       } catch (err) {
         const isCloudBlock = /sign in|bot|429|403|forbidden|cookie|automated|captcha/i.test(err.message);
+        if (isCloudBlock) {
+          this.markYoutubeBlocked();
+        }
 
         // 1. High-Reliability Cloud Fallback: SoundCloud!
         // When YouTube blocks cloud datacenter IPs, skip trying more YouTube candidates and jump straight to SoundCloud!
         if (!metadata.url.includes('soundcloud.com') && !metadata.url.startsWith('scsearch:')) {
           console.warn(`☁️ [Downloader] YouTube blocked on cloud IP (${err.message.slice(0, 80)}). Falling back to SoundCloud for: "${metadata.title}"...`);
           try {
-            let query = '';
-            if (metadata.rawTitle) {
-              query = metadata.rawTitle
-                .replace(/^(?:video\s*song|full\s*video(?:\s*song)?|official\s*video|audio\s*song|full\s*song|lyric\s*video)\s*[-:]\s*/i, '')
-                .replace(/[\[\(].*?[\)\]]/g, '')
-                .replace(/[#|//]/g, ' ')
-                .replace(/\b(official|music video|official video|video song|hd|4k)\b/gi, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-            }
-            if (!query || query.length < 3) {
-              const cleanArtist = (metadata.artist && !metadata.artist.toLowerCase().includes('video') && metadata.artist !== 'Unknown Artist')
-                ? metadata.artist : '';
-              query = `${metadata.title} ${cleanArtist}`.trim();
-            }
-
-            const scMeta = {
-              ...metadata,
-              title: metadata.title,
-              url: `scsearch1:${query}`
-            };
-            return await this._executeDownload(scMeta, false);
+            return await this._downloadViaSoundCloud(metadata);
           } catch (scErr) {
             console.error(`❌ [Downloader] SoundCloud fallback failed:`, scErr.message.slice(0, 80));
           }
@@ -265,7 +299,7 @@ export class TrackDownloader {
       ...extractorArgs,
       '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       '--no-check-certificate',
-      '--socket-timeout', '10',
+      '--socket-timeout', '5',
       ...ffmpegLocationArgs,
       ...cookieArgs,
       '-o', tempPath,
@@ -303,7 +337,7 @@ export class TrackDownloader {
           this.activeProcesses.delete(proc);
         };
 
-        const maxTimeoutMs = isSoundCloud ? 18000 : 25000;
+        const maxTimeoutMs = isSoundCloud ? 15000 : 10000;
         timeoutId = setTimeout(() => {
           if (!settled) {
             settled = true;
