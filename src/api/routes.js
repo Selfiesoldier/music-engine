@@ -189,7 +189,8 @@ export function createRouter(context) {
       res.json({
         ok: true,
         env: envInfo,
-        versionCheck: testResult,
+        python3: python3Version,
+        directYtdlp: directYtdlp,
         metadata: meta,
         downloadAttempt: dlResult
       });
@@ -197,6 +198,52 @@ export function createRouter(context) {
       res.status(500).json({ ok: false, error: e.message, stack: e.stack });
     }
   });
+
+  // Dedicated test download endpoint with real-time stdout/stderr capture
+  router.get('/api/test-download', async (req, res) => {
+    try {
+      const videoId = req.query.id || 'dQw4w9WgXcQ';
+      const bin = downloader.resolvedYtdlpPath;
+      const tempPath = `/tmp/test_${Date.now()}.m4a`;
+      const args = [
+        '-f', 'ba/b/best',
+        '--no-warnings',
+        '--extractor-args', 'youtube:player_client=android',
+        '-o', tempPath,
+        `https://youtube.com/watch?v=${videoId}`
+      ];
+
+      const t0 = Date.now();
+      const result = await new Promise((resolve) => {
+        const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '';
+        let stderr = '';
+        const t = setTimeout(() => {
+          try { proc.kill('SIGKILL'); } catch (e) {}
+          resolve({ timeout: true, stdout, stderr, elapsedSec: (Date.now() - t0) / 1000 });
+        }, 20000);
+
+        proc.stdout.on('data', d => stdout += d.toString());
+        proc.stderr.on('data', d => stderr += d.toString());
+        proc.on('close', code => {
+          clearTimeout(t);
+          const exists = fs.existsSync(tempPath);
+          const size = exists ? fs.statSync(tempPath).size : 0;
+          try { if (exists) fs.unlinkSync(tempPath); } catch (e) {}
+          resolve({ code, stdout, stderr, fileCreated: exists, fileSize: size, elapsedSec: (Date.now() - t0) / 1000 });
+        });
+        proc.on('error', err => {
+          clearTimeout(t);
+          resolve({ error: err.message, elapsedSec: (Date.now() - t0) / 1000 });
+        });
+      });
+
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // 3. Queue status
   router.get('/api/queue', (req, res) => {
