@@ -37,13 +37,11 @@ RUN cp yt-dlp.conf /etc/yt-dlp.conf
 RUN mkdir -p cache/tracks cache/tts && chmod +x start.sh
 
 # Enforce Node memory boundary (160 MB) for 512 MB cloud hosts
-ENV NODE_OPTIONS="--max-old-space-size=128 --expose-gc"
+ENV PORT=10000
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
 
-# Support Render (10000), HuggingFace (7860), and local/VPS (30060)
+# Render Web Service primary port
 EXPOSE 10000
-EXPOSE 7860
-EXPOSE 30060
 
 CMD ["./start.sh"]
