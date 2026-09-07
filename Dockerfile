@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages --no-cache-dir -U yt-dlp curl_cffi bgutil-ytdlp-pot-provider
+    && pip3 install --break-system-packages --no-cache-dir -U "yt-dlp[default]" curl_cffi bgutil-ytdlp-pot-provider
 
 WORKDIR /app
 
@@ -25,6 +26,10 @@ RUN npm install --omit=dev
 
 # Copy source code and assets
 COPY . .
+
+# Install yt-dlp.conf system-wide so yt-dlp auto-reads POT provider & player client config
+RUN cp yt-dlp.conf /etc/yt-dlp.conf
+
 RUN mkdir -p cache/tracks cache/tts && chmod +x start.sh
 
 # Enforce Node memory boundary (160 MB) for 512 MB cloud hosts
