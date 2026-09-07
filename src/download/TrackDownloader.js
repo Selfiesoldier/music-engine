@@ -143,10 +143,10 @@ export class TrackDownloader {
       try {
         return await this._executeDownload(metadata);
       } catch (err) {
-        // Fallback 1: If primary video was blocked, region-restricted, or format failed, try 1 candidate!
+        // Fallback: If primary video was blocked, region-restricted, or format failed, try YouTube candidates!
         if (metadata.candidates && metadata.candidates.length > 0) {
           const cand = metadata.candidates[0];
-          console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying fallback: "${cand.title}" (${cand.videoId})...`);
+          console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying YouTube fallback: "${cand.title}" (${cand.videoId})...`);
           try {
             const candMeta = {
               ...metadata,
@@ -155,24 +155,10 @@ export class TrackDownloader {
               title: cand.title,
               candidates: []
             };
-            return await this._executeDownload(candMeta, false);
+            return await this._executeDownload(candMeta, true);
           } catch (candErr) {
             console.warn(`⚠️ [Downloader] Fallback candidate failed:`, candErr.message.slice(0, 80));
           }
-        }
-
-        // Fallback 2: SoundCloud High-Speed Audio Bridge (Zero bot-blocks, zero cookies needed, 100% cloud-friendly)
-        const scQuery = `${metadata.artist && metadata.artist !== 'Unknown Artist' ? `${metadata.artist} - ` : ''}${metadata.title}`;
-        console.log(`🌐 [Downloader] YouTube restricted. Engaging SoundCloud audio bridge for: "${scQuery}"...`);
-        try {
-          const scMeta = {
-            ...metadata,
-            url: `scsearch1:${scQuery}`,
-            candidates: []
-          };
-          return await this._executeDownload(scMeta, false);
-        } catch (scErr) {
-          console.warn(`⚠️ [Downloader] SoundCloud bridge failed:`, scErr.message.slice(0, 80));
         }
 
         throw err;
@@ -256,9 +242,9 @@ export class TrackDownloader {
             try {
               if (!proc.killed) proc.kill('SIGKILL');
             } catch (e) {}
-            reject(new Error(`yt-dlp download timed out after 15s for "${metadata.title}"`));
+            reject(new Error(`yt-dlp download timed out after 35s for "${metadata.title}"`));
           }
-        }, 15000);
+        }, 35000);
 
         let stderr = '';
         if (proc.stderr) {
