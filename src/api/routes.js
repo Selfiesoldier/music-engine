@@ -118,39 +118,42 @@ export function createRouter(context) {
       const isVersionOnly = req.query.versionOnly === 'true' || req.query.fast === 'true';
       const bin = downloader.resolvedYtdlpPath;
       
-      const testResult = await new Promise((resolve) => {
-        let isPython = false;
-        let execBin = bin;
-        let args = ['--version'];
-        if (!bin.endsWith('.exe') && fs.existsSync(bin)) {
-          try {
-            const head = fs.readFileSync(bin, { encoding: 'utf-8', flag: 'r' }).slice(0, 100);
-            if (head.includes('python')) {
-              isPython = true;
-              execBin = 'python3';
-              args = [bin, '--version'];
-            }
-          } catch (e) {}
+      let binStat = null;
+      let headSample = '';
+      try {
+        if (fs.existsSync(bin)) {
+          const st = fs.statSync(bin);
+          binStat = { size: st.size, mode: st.mode.toString(8) };
+          headSample = fs.readFileSync(bin, { encoding: 'utf-8', flag: 'r' }).slice(0, 150);
         }
+      } catch (e) {
+        binStat = { error: e.message };
+      }
 
-        const proc = spawn(execBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        let out = '';
-        let err = '';
-        const t = setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch (e) {}
-          resolve({ execBin, bin, timeout: true, out: out.trim(), err: err.trim() });
-        }, 5000);
+      // Test 1: Run python3 directly
+      const python3Version = await new Promise((res) => {
+        try {
+          const p = spawn('python3', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let o = '';
+          const t = setTimeout(() => { try { p.kill(); } catch (e) {} res({ timeout: true }); }, 3000);
+          p.stdout.on('data', d => o += d.toString());
+          p.on('close', c => { clearTimeout(t); res({ code: c, out: o.trim() }); });
+          p.on('error', e => { clearTimeout(t); res({ error: e.message }); });
+        } catch (e) { res({ error: e.message }); }
+      });
 
-        proc.stdout.on('data', d => out += d.toString());
-        proc.stderr.on('data', d => err += d.toString());
-        proc.on('close', code => {
-          clearTimeout(t);
-          resolve({ execBin, bin, code, out: out.trim(), err: err.trim() });
-        });
-        proc.on('error', e => {
-          clearTimeout(t);
-          resolve({ execBin, bin, error: e.message });
-        });
+      // Test 2: Run yt-dlp directly
+      const directYtdlp = await new Promise((res) => {
+        try {
+          const p = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let o = '';
+          let err = '';
+          const t = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} res({ timeout: true, out: o.trim(), err: err.trim() }); }, 4000);
+          p.stdout.on('data', d => o += d.toString());
+          p.stderr.on('data', d => err += d.toString());
+          p.on('close', c => { clearTimeout(t); res({ code: c, out: o.trim(), err: err.trim() }); });
+          p.on('error', e => { clearTimeout(t); res({ error: e.message }); });
+        } catch (e) { res({ error: e.message }); }
       });
 
       const envInfo = {
@@ -158,8 +161,9 @@ export function createRouter(context) {
         nodeVersion: process.version,
         ffmpeg: CONFIG.FFMPEG_PATH,
         ffmpegExists: fs.existsSync(CONFIG.FFMPEG_PATH),
-        ytdlpPath: downloader.resolvedYtdlpPath,
-        ytdlpExists: fs.existsSync(downloader.resolvedYtdlpPath),
+        ytdlpPath: bin,
+        ytdlpStat: binStat,
+        ytdlpHead: headSample.slice(0, 80),
         hasCookies: Boolean(downloader.cookieShield.findMasterCookieFile())
       };
 
@@ -167,7 +171,8 @@ export function createRouter(context) {
         return res.json({
           ok: true,
           env: envInfo,
-          versionCheck: testResult
+          python3: python3Version,
+          directYtdlp: directYtdlp
         });
       }
 
