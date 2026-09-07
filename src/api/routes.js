@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { CONFIG } from '../config.js';
 import { AudioFilters } from '../audio/AudioFilters.js';
@@ -109,6 +110,50 @@ export function createRouter(context) {
   // Real-time Event Stream (SSE)
   router.get('/api/events', (req, res) => {
     wsServer.addSSEClient(req, res);
+  });
+
+  // Diagnostic endpoint to debug yt-dlp on Render
+  router.get('/api/debug-download', async (req, res) => {
+    try {
+      const q = req.query.q || 'Kaun Talha';
+      const meta = await downloader.resolveMetadata(q);
+      const testResult = await new Promise((resolve) => {
+        const bin = downloader.resolvedYtdlpPath;
+        const proc = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        let err = '';
+        proc.stdout.on('data', d => out += d.toString());
+        proc.stderr.on('data', d => err += d.toString());
+        proc.on('close', code => resolve({ bin, code, out: out.trim(), err: err.trim() }));
+        proc.on('error', e => resolve({ bin, error: e.message }));
+      });
+
+      let dlResult = null;
+      try {
+        const dlPath = await downloader._executeDownload(meta, false);
+        dlResult = { success: true, dlPath };
+      } catch (dlErr) {
+        dlResult = { success: false, error: dlErr.message };
+      }
+
+      res.json({
+        ok: true,
+        env: {
+          platform: process.platform,
+          nodeVersion: process.version,
+          ffmpeg: CONFIG.FFMPEG_PATH,
+          ffmpegExists: fs.existsSync(CONFIG.FFMPEG_PATH),
+          ytdlpPath: downloader.resolvedYtdlpPath,
+          ytdlpExists: fs.existsSync(downloader.resolvedYtdlpPath),
+          hasCookies: Boolean(downloader.cookieShield.findMasterCookieFile())
+        },
+        versionCheck: testResult,
+        metadata: meta,
+        downloadAttempt: dlResult
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message, stack: e.stack });
+    }
   });
 
   // 3. Queue status
