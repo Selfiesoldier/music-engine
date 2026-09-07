@@ -1,8 +1,12 @@
 FROM denoland/deno:bin AS deno_bin
+FROM brainicism/bgutil-ytdlp-pot-provider:latest AS pot_provider
 FROM node:20-bookworm-slim
 
 # Copy official Deno binary (the only JS runtime natively supported by yt-dlp for EJS challenge solving)
 COPY --from=deno_bin /deno /usr/local/bin/deno
+
+# Copy prebuilt bgutil PO Token provider for Botguard challenges
+COPY --from=pot_provider /app /app/pot-provider
 
 # Install system dependencies: FFmpeg, Python3, python3-pip, ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -11,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages --no-cache-dir -U yt-dlp
+    && pip3 install --break-system-packages --no-cache-dir -U yt-dlp curl_cffi bgutil-ytdlp-pot-provider
 
 WORKDIR /app
 
@@ -21,7 +25,7 @@ RUN npm install --omit=dev
 
 # Copy source code and assets
 COPY . .
-RUN mkdir -p cache/tracks cache/tts
+RUN mkdir -p cache/tracks cache/tts && chmod +x start.sh
 
 # Enforce Node memory boundary (160 MB) for 512 MB cloud hosts
 ENV NODE_OPTIONS="--max-old-space-size=160 --expose-gc"
@@ -33,4 +37,4 @@ EXPOSE 10000
 EXPOSE 7860
 EXPOSE 30060
 
-CMD ["node", "src/index.js"]
+CMD ["./start.sh"]
