@@ -42,7 +42,7 @@ export class PersistentEncoder {
       '-ac', String(CONFIG.CHANNELS),
       '-i', 'pipe:0',
       '-c:a', 'libmp3lame',
-      '-compression_level', '9',
+      '-compression_level', '2',
       '-b:a', CONFIG.BITRATE,
       '-flush_packets', '1',
       '-write_xing', '0',

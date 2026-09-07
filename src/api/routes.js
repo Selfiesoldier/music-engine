@@ -483,6 +483,17 @@ export function createRouter(context) {
 
       // If actively playing or preparing a track, queue it behind the current track
       if (pacer.isPlaying || queueManager.isPreparing) {
+        // 👑 Human Priority: If currently playing OR preparing track is AUTOPLAY, preempt it immediately!
+        if (!metadata.isAutoplay && (pacer.currentTrack?.isAutoplay || queueManager.preparingTrack?.isAutoplay)) {
+          console.log(`👑 [Human Request Priority] Preempting autoplay track for "${metadata.title}" (Requester: ${metadata.requester})`);
+          pacer.stopCurrentStream();
+          queueManager.isPreparing = false;
+          queueManager.preparingTrack = null;
+          res.json({ status: 'playing', metadata, economy: economyStatus });
+          context.playNext(metadata);
+          return;
+        }
+
         const pos = queueManager.add(metadata);
         wsServer.broadcast('queue_updated', { queue: queueManager.getQueue() });
         downloader.downloadTrack(metadata).catch(() => {});
@@ -512,9 +523,7 @@ export function createRouter(context) {
     const currentTitle = pacer.currentTrack?.title || queueManager.preparingTrack?.title || 'Unknown';
     queueManager.isPreparing = false;
     queueManager.preparingTrack = null;
-    if (downloader && typeof downloader.abortAll === 'function') {
-      downloader.abortAll();
-    }
+    queueManager.purgeAutoplayTracks();
     pacer.stopCurrentStream();
     context.playNext();
     res.json({ status: 'skipped', skippedTrack: currentTitle });

@@ -442,9 +442,14 @@
         const data = await res.json();
         
         if (data.metadata) {
-          document.getElementById('trackTitle').textContent = data.metadata.title;
           const reqStr = data.metadata.requester && data.metadata.requester !== 'User' ? ` • Req: ${data.metadata.requester}` : '';
-          document.getElementById('trackArtist').textContent = (data.metadata.artist || 'Unknown') + reqStr;
+          if (data.isPreparing) {
+            document.getElementById('trackTitle').textContent = '⏳ Preparing: ' + data.metadata.title;
+            document.getElementById('trackArtist').textContent = 'Fetching audio... Stream is on transition loop' + reqStr;
+          } else {
+            document.getElementById('trackTitle').textContent = data.metadata.title;
+            document.getElementById('trackArtist').textContent = (data.metadata.artist || 'Unknown') + reqStr;
+          }
           if (data.metadata.thumbnail) {
             document.getElementById('trackThumb').src = data.metadata.thumbnail;
           }

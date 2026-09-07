@@ -120,11 +120,7 @@ const context = {
     wsServer.broadcast('track_preparing', { metadata: track });
 
     // 1. Start downloading the track in the background immediately!
-    // This allows YouTube fetching (~4-6s) to happen in parallel with transition music & TT drop!
     const downloadPromise = downloader.downloadTrack(track);
-
-    // Stop current stream if any so transition lofi music plays smoothly
-    pacer.stopCurrentStream();
 
     try {
       // 2. Play pending custom user TTS if explicitly requested via /tts

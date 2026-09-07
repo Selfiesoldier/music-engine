@@ -60,7 +60,7 @@ export const CONFIG = {
   SESSION_SECRET: process.env.SESSION_SECRET || 'musicbot_engine_secure_secret',
   
   // Audio specs
-  BITRATE: process.env.AUDIO_BITRATE || '192k',
+  BITRATE: process.env.AUDIO_BITRATE || '320k',
   SAMPLE_RATE: parseInt(process.env.AUDIO_SAMPLE_RATE || '44100', 10),
   CHANNELS: parseInt(process.env.AUDIO_CHANNELS || '2', 10),
   INITIAL_BURST_CHUNKS: parseInt(process.env.INITIAL_BURST_CHUNKS || '8', 10),

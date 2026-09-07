@@ -238,7 +238,7 @@ export class TrackDownloader {
           '--extractor-args', 'youtube:player_client=android,ios',
           '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
         ];
-    const formatArg = isSoundCloud ? 'bestaudio/best' : '18/ba[ext=m4a]/ba/b/best';
+    const formatArg = isSoundCloud ? 'bestaudio/best' : 'ba[ext=m4a]/ba/b/best/18';
 
     const ytdlpArgs = [
       '--no-playlist',
