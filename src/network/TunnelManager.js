@@ -7,12 +7,19 @@ export class TunnelManager {
   constructor(port = CONFIG.PORT) {
     this.port = port;
     this.process = null;
-    this.publicUrl = process.env.CUSTOM_URL || process.env.PUBLIC_URL || null;
+    this.publicUrl = process.env.CUSTOM_URL || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || null;
     this.urlFilePath = path.join(CONFIG.ROOT_DIR, 'public_url.txt');
     this.isStarting = false;
     this.isShuttingDown = false;
     this.reconnectTimer = null;
     this.resolvedBin = this.resolveBinary();
+  }
+
+  setPublicUrl(url) {
+    if (url && url !== this.publicUrl) {
+      this.publicUrl = url.replace(/\/+$/, '');
+      this.saveUrl(this.publicUrl);
+    }
   }
 
   resolveBinary() {
@@ -34,11 +41,19 @@ export class TunnelManager {
   async start() {
     if (this.isShuttingDown) return null;
 
-    // 1. If custom URL already provided in .env, use that directly
-    if (this.publicUrl) {
-      console.log(`\n🌐 [Network] Custom public URL configured: ${this.publicUrl}`);
-      this.saveUrl(this.publicUrl);
-      return this.publicUrl;
+    // 1. If custom URL already provided in .env or Render, use that directly
+    if (this.getPublicUrl()) {
+      const pub = this.getPublicUrl();
+      console.log(`\n🌐 [Network] Public HTTPS URL active: ${pub}`);
+      this.saveUrl(pub);
+      return pub;
+    }
+
+    // Check if cloudflared binary exists before attempting spawn
+    const hasBin = fs.existsSync(this.resolvedBin);
+    if (!hasBin && process.platform !== 'win32') {
+      console.log('ℹ️ [Cloudflare Tunnel] cloudflared binary not found in environment, skipping auto-tunnel.');
+      return null;
     }
 
     // 2. Launch Cloudflare Quick Tunnel
@@ -103,11 +118,12 @@ export class TunnelManager {
   }
 
   getPublicUrl() {
-    return this.publicUrl;
+    return this.publicUrl || process.env.RENDER_EXTERNAL_URL || null;
   }
 
   getStreamUrl() {
-    return this.publicUrl ? `${this.publicUrl}/stream` : `http://localhost:${this.port}/stream`;
+    const pub = this.getPublicUrl();
+    return pub ? `${pub}/stream` : `http://localhost:${this.port}/stream`;
   }
 
   stop() {

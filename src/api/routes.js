@@ -68,9 +68,24 @@ export function createRouter(context) {
     encoder.addClient(req, res);
   });
 
+  // Helper to resolve public URL dynamically if running behind reverse proxy
+  const resolvePublicUrl = (req) => {
+    let url = tunnelManager ? tunnelManager.getPublicUrl() : null;
+    if (!url && req) {
+      const host = req.get('x-forwarded-host') || req.get('host');
+      const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+      if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+        url = `${proto}://${host}`;
+        if (tunnelManager) tunnelManager.setPublicUrl(url);
+      }
+    }
+    return url;
+  };
+
   // 2. Fast Status Snapshot (Highrise Bot & Dashboard polling)
   router.get('/current', (req, res) => {
     const track = pacer.currentTrack || queueManager.preparingTrack;
+    const pubUrl = resolvePublicUrl(req);
     res.json({
       title: track ? track.title : (queueManager.isPreparing ? 'Preparing track...' : 'Waiting for song...'),
       isPlaying: pacer.isPlaying,
@@ -80,8 +95,8 @@ export function createRouter(context) {
       djConfig: queueManager.getDjConfig(),
       transitionStatus: transitionManager ? transitionManager.getStatus() : null,
       customTtsPending: context.customTtsQueue ? context.customTtsQueue.length : 0,
-      publicUrl: tunnelManager ? tunnelManager.getPublicUrl() : null,
-      publicStreamUrl: tunnelManager ? tunnelManager.getStreamUrl() : null,
+      publicUrl: pubUrl,
+      publicStreamUrl: pubUrl ? `${pubUrl}/stream` : (tunnelManager ? tunnelManager.getStreamUrl() : null),
       metadata: track,
       startTime: pacer.playbackStartTime,
       serverElapsed: pacer.getElapsedMs(),
@@ -124,10 +139,12 @@ export function createRouter(context) {
 
   // 12. Public Tunnel Info (Highrise integration endpoint)
   router.get('/api/tunnel', (req, res) => {
+    const pubUrl = resolvePublicUrl(req);
+    const streamUrl = pubUrl ? `${pubUrl}/stream` : (tunnelManager ? tunnelManager.getStreamUrl() : null);
     res.json({
-      active: Boolean(tunnelManager?.getPublicUrl()),
-      publicUrl: tunnelManager ? tunnelManager.getPublicUrl() : null,
-      streamUrl: tunnelManager ? tunnelManager.getStreamUrl() : null
+      active: Boolean(pubUrl),
+      publicUrl: pubUrl,
+      streamUrl: streamUrl
     });
   });
 
