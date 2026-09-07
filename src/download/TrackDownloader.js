@@ -242,9 +242,9 @@ export class TrackDownloader {
             try {
               if (!proc.killed) proc.kill('SIGKILL');
             } catch (e) {}
-            reject(new Error(`yt-dlp download timed out after 35s for "${metadata.title}"`));
+            reject(new Error(`yt-dlp download timed out after 60s for "${metadata.title}"`));
           }
-        }, 35000);
+        }, 60000);
 
         let stderr = '';
         if (proc.stderr) {

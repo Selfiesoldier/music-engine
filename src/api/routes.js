@@ -270,7 +270,7 @@ export function createRouter(context) {
         const t = setTimeout(() => {
           try { proc.kill('SIGKILL'); } catch (e) {}
           resolve({ timeout: true, args, stdout, stderr, elapsedSec: (Date.now() - t0) / 1000 });
-        }, 25000);
+        }, 60000);
 
         proc.stdout.on('data', d => stdout += d.toString());
         proc.stderr.on('data', d => stderr += d.toString());
