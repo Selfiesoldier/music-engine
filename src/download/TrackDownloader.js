@@ -76,6 +76,7 @@ export class TrackDownloader {
     // 1. Direct URL check
     const isUrl = query.startsWith('http://') || query.startsWith('https://');
     let video = null;
+    let candidates = [];
 
     if (/^[a-zA-Z0-9_-]{11}$/.test(query.trim())) {
       try {
@@ -95,10 +96,12 @@ export class TrackDownloader {
         if (!video) {
           const searchRes = await yts(query);
           video = searchRes?.videos?.[0];
+          candidates = searchRes?.videos?.slice(1, 5) || [];
         }
       } else {
         const searchRes = await yts(query);
         video = searchRes?.videos?.[0];
+        candidates = searchRes?.videos?.slice(1, 5) || [];
       }
     }
 
@@ -115,7 +118,8 @@ export class TrackDownloader {
       rawArtist: video.author?.name || 'Unknown Artist',
       duration: video.timestamp || '0:00',
       durationSeconds: video.seconds || 0,
-      thumbnail: video.thumbnail
+      thumbnail: video.thumbnail,
+      candidates
     };
   }
 
@@ -135,7 +139,32 @@ export class TrackDownloader {
       return await this.inFlightDownloads.get(videoId);
     }
 
-    const downloadPromise = this._executeDownload(metadata);
+    const downloadPromise = (async () => {
+      try {
+        return await this._executeDownload(metadata);
+      } catch (err) {
+        // Fallback: If primary video was blocked, region-restricted, or format failed, try fallback candidates!
+        if (metadata.candidates && metadata.candidates.length > 0) {
+          for (const cand of metadata.candidates) {
+            console.warn(`🔄 [Downloader] Primary video failed (${err.message.slice(0, 80)}). Trying candidate: "${cand.title}" (${cand.videoId})...`);
+            try {
+              const candMeta = {
+                ...metadata,
+                videoId: cand.videoId,
+                url: cand.url || `https://youtube.com/watch?v=${cand.videoId}`,
+                title: cand.title,
+                candidates: []
+              };
+              return await this._executeDownload(candMeta);
+            } catch (candErr) {
+              console.warn(`⚠️ [Downloader] Candidate ${cand.videoId} failed:`, candErr.message.slice(0, 80));
+            }
+          }
+        }
+        throw err;
+      }
+    })();
+
     this.inFlightDownloads.set(videoId, downloadPromise);
     try {
       return await downloadPromise;
@@ -159,13 +188,14 @@ export class TrackDownloader {
 
     const ytdlpArgs = [
       '--no-playlist',
-      '-f', 'ba[ext=m4a]/ba/b',
+      '-f', 'ba/b/best',
       '--no-warnings',
       '--geo-bypass',
       '--force-ipv4',
+      '--extractor-args', 'youtube:player_client=android,web,tv',
       '--concurrent-fragments', '4',
       '--no-check-certificate',
-      '--socket-timeout', '8',
+      '--socket-timeout', '10',
       ...ffmpegLocationArgs,
       ...cookieArgs,
       '-o', tempPath,
@@ -202,11 +232,18 @@ export class TrackDownloader {
       proc.on('close', code => {
         if (code === 0) {
           try {
-            if (fs.existsSync(tempPath)) {
-              fs.renameSync(tempPath, outputPath);
+            const parentDir = path.dirname(tempPath);
+            const baseTemp = path.basename(tempPath);
+            const matches = fs.existsSync(parentDir)
+              ? fs.readdirSync(parentDir).filter(f => f.startsWith(baseTemp) && !f.endsWith('.part'))
+              : [];
+
+            if (matches.length > 0) {
+              const matchedFile = path.join(parentDir, matches[0]);
+              fs.renameSync(matchedFile, outputPath);
               resolve();
-            } else if (fs.existsSync(`${tempPath}.m4a`)) {
-              fs.renameSync(`${tempPath}.m4a`, outputPath);
+            } else if (fs.existsSync(tempPath)) {
+              fs.renameSync(tempPath, outputPath);
               resolve();
             } else if (fs.existsSync(outputPath)) {
               resolve();
