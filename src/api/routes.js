@@ -210,6 +210,13 @@ export function createRouter(context) {
       const isList = req.query.list === 'true' || req.query.listFormats === 'true';
       const format = req.query.format || 'ba/b/best';
       const jsRuntime = req.query.js || 'node';
+      const client = req.query.client;
+      const clientArgs = client ? ['--extractor-args', `youtube:player_client=${client}`] : [];
+      const ua = req.query.ua !== 'false'
+        ? (req.query.ua || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36')
+        : null;
+      const uaArgs = ua ? ['--user-agent', ua] : [];
+      const verboseArgs = req.query.verbose === 'true' ? ['--verbose'] : [];
 
       const args = isList
         ? [
@@ -217,6 +224,9 @@ export function createRouter(context) {
             '--no-warnings',
             '--geo-bypass',
             '--js-runtimes', jsRuntime,
+            ...clientArgs,
+            ...uaArgs,
+            ...verboseArgs,
             ...cookieArgs,
             `https://youtube.com/watch?v=${videoId}`
           ]
@@ -226,6 +236,9 @@ export function createRouter(context) {
             '--geo-bypass',
             '--js-runtimes', jsRuntime,
             '--socket-timeout', '10',
+            ...clientArgs,
+            ...uaArgs,
+            ...verboseArgs,
             ...cookieArgs,
             '-o', tempPath,
             `https://youtube.com/watch?v=${videoId}`
