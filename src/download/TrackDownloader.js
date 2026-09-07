@@ -173,16 +173,16 @@ export class TrackDownloader {
     }
   }
 
-  async _executeDownload(metadata) {
+  async _executeDownload(metadata, useCookies = true) {
     const videoId = metadata.videoId;
-    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"`);
+    console.log(`📥 [Downloader] Fetching audio from YouTube for: "${metadata.title}"${useCookies ? '' : ' (no-cookies mode)'}`);
     const outputPath = this.audioCache.getTrackPath(videoId);
     const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const tempPath = `${outputPath}.${uniqueId}.tmp`;
 
     try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (e) {}
 
-    const cookieArgs = this.cookieShield.getYtdlpCookieArgs();
+    const cookieArgs = useCookies ? this.cookieShield.getYtdlpCookieArgs() : [];
     const ffmpegDir = path.dirname(CONFIG.FFMPEG_PATH);
     const ffmpegLocationArgs = fs.existsSync(CONFIG.FFMPEG_PATH) ? ['--ffmpeg-location', ffmpegDir] : [];
 
@@ -192,7 +192,8 @@ export class TrackDownloader {
       '--no-warnings',
       '--geo-bypass',
       '--force-ipv4',
-      '--extractor-args', 'youtube:player_client=android,web,tv',
+      '--js-runtimes', 'node',
+      '--extractor-args', 'youtube:player_client=android,ios',
       '--concurrent-fragments', '4',
       '--no-check-certificate',
       '--socket-timeout', '10',
@@ -203,66 +204,74 @@ export class TrackDownloader {
     ];
 
     const startTime = Date.now();
-    await new Promise((resolve, reject) => {
-      let isPython = false;
-      let bin = this.resolvedYtdlpPath;
-      let args = ytdlpArgs;
+    try {
+      await new Promise((resolve, reject) => {
+        let isPython = false;
+        let bin = this.resolvedYtdlpPath;
+        let args = ytdlpArgs;
 
-      // On Linux, if yt-dlp is a Python script
-      if (!bin.endsWith('.exe') && fs.existsSync(bin)) {
-        try {
-          const head = fs.readFileSync(bin, { encoding: 'utf-8', flag: 'r' }).slice(0, 100);
-          if (head.includes('python')) {
-            isPython = true;
-            bin = 'python3';
-            args = [this.resolvedYtdlpPath, ...ytdlpArgs];
-          }
-        } catch (e) {}
-      }
-
-      const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      this.activeProcesses.add(proc);
-
-      const removeProc = () => this.activeProcesses.delete(proc);
-      proc.on('close', removeProc);
-      proc.on('error', removeProc);
-
-      let stderr = '';
-      proc.stderr.on('data', d => stderr += d.toString());
-      proc.on('close', code => {
-        if (code === 0) {
+        // On Linux, if yt-dlp is a Python script
+        if (!bin.endsWith('.exe') && fs.existsSync(bin)) {
           try {
-            const parentDir = path.dirname(tempPath);
-            const baseTemp = path.basename(tempPath);
-            const matches = fs.existsSync(parentDir)
-              ? fs.readdirSync(parentDir).filter(f => f.startsWith(baseTemp) && !f.endsWith('.part'))
-              : [];
-
-            if (matches.length > 0) {
-              const matchedFile = path.join(parentDir, matches[0]);
-              fs.renameSync(matchedFile, outputPath);
-              resolve();
-            } else if (fs.existsSync(tempPath)) {
-              fs.renameSync(tempPath, outputPath);
-              resolve();
-            } else if (fs.existsSync(outputPath)) {
-              resolve();
-            } else {
-              reject(new Error(`yt-dlp output file not found for ${tempPath}`));
+            const head = fs.readFileSync(bin, { encoding: 'utf-8', flag: 'r' }).slice(0, 100);
+            if (head.includes('python')) {
+              isPython = true;
+              bin = 'python3';
+              args = [this.resolvedYtdlpPath, ...ytdlpArgs];
             }
-          } catch (renameErr) {
-            if (fs.existsSync(outputPath)) {
-              resolve();
-            } else {
-              reject(renameErr);
-            }
-          }
-        } else {
-          reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(-300).trim()}`));
+          } catch (e) {}
         }
+
+        const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        this.activeProcesses.add(proc);
+
+        const removeProc = () => this.activeProcesses.delete(proc);
+        proc.on('close', removeProc);
+        proc.on('error', removeProc);
+
+        let stderr = '';
+        proc.stderr.on('data', d => stderr += d.toString());
+        proc.on('close', code => {
+          if (code === 0) {
+            try {
+              const parentDir = path.dirname(tempPath);
+              const baseTemp = path.basename(tempPath);
+              const matches = fs.existsSync(parentDir)
+                ? fs.readdirSync(parentDir).filter(f => f.startsWith(baseTemp) && !f.endsWith('.part'))
+                : [];
+
+              if (matches.length > 0) {
+                const matchedFile = path.join(parentDir, matches[0]);
+                fs.renameSync(matchedFile, outputPath);
+                resolve();
+              } else if (fs.existsSync(tempPath)) {
+                fs.renameSync(tempPath, outputPath);
+                resolve();
+              } else if (fs.existsSync(outputPath)) {
+                resolve();
+              } else {
+                reject(new Error(`yt-dlp output file not found for ${tempPath}`));
+              }
+            } catch (renameErr) {
+              if (fs.existsSync(outputPath)) {
+                resolve();
+              } else {
+                reject(renameErr);
+              }
+            }
+          } else {
+            reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(-300).trim()}`));
+          }
+        });
+        proc.on('error', reject);
       });
-      proc.on('error', reject);
-    });
+    } catch (dlErr) {
+      if (useCookies && cookieArgs.length > 0) {
+        console.warn(`🔄 [Downloader] Failed with cookies (${dlErr.message.slice(0, 60)}). Retrying via android/ios client without cookies...`);
+        return await this._executeDownload(metadata, false);
+      }
+      throw dlErr;
+    }
 
     if (fs.existsSync(outputPath)) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
