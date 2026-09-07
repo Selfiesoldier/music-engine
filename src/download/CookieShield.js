@@ -31,11 +31,12 @@ export class CookieShield {
     ];
 
     const targetNames = [
+      CONFIG.COOKIES_FILE,
       'cookies.master.txt',
       'www.youtube.com_cookies.txt',
       'cookies.txt',
       'cookies .txt'
-    ];
+    ].filter(Boolean);
 
     for (const dir of searchDirs) {
       if (!fs.existsSync(dir)) continue;

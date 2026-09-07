@@ -192,6 +192,7 @@ export class TrackDownloader {
       '-f', 'ba/b/best',
       '--no-warnings',
       '--geo-bypass',
+      '--js-runtimes', 'node',
       '--no-check-certificate',
       '--socket-timeout', '10',
       ...ffmpegLocationArgs,

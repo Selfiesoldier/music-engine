@@ -207,13 +207,29 @@ export function createRouter(context) {
       const tempPath = `/tmp/test_${Date.now()}.m4a`;
       const useCookies = req.query.cookies !== 'false';
       const cookieArgs = useCookies ? downloader.cookieShield.getYtdlpCookieArgs() : [];
-      const args = [
-        '-f', 'ba/b/best',
-        '--no-warnings',
-        ...cookieArgs,
-        '-o', tempPath,
-        `https://youtube.com/watch?v=${videoId}`
-      ];
+      const isList = req.query.list === 'true' || req.query.listFormats === 'true';
+      const format = req.query.format || 'ba/b/best';
+      const jsRuntime = req.query.js || 'node';
+
+      const args = isList
+        ? [
+            '-F',
+            '--no-warnings',
+            '--geo-bypass',
+            '--js-runtimes', jsRuntime,
+            ...cookieArgs,
+            `https://youtube.com/watch?v=${videoId}`
+          ]
+        : [
+            '-f', format,
+            '--no-warnings',
+            '--geo-bypass',
+            '--js-runtimes', jsRuntime,
+            '--socket-timeout', '10',
+            ...cookieArgs,
+            '-o', tempPath,
+            `https://youtube.com/watch?v=${videoId}`
+          ];
 
       const t0 = Date.now();
       const result = await new Promise((resolve) => {
@@ -222,8 +238,8 @@ export function createRouter(context) {
         let stderr = '';
         const t = setTimeout(() => {
           try { proc.kill('SIGKILL'); } catch (e) {}
-          resolve({ timeout: true, stdout, stderr, elapsedSec: (Date.now() - t0) / 1000 });
-        }, 20000);
+          resolve({ timeout: true, args, stdout, stderr, elapsedSec: (Date.now() - t0) / 1000 });
+        }, 25000);
 
         proc.stdout.on('data', d => stdout += d.toString());
         proc.stderr.on('data', d => stderr += d.toString());
@@ -232,11 +248,11 @@ export function createRouter(context) {
           const exists = fs.existsSync(tempPath);
           const size = exists ? fs.statSync(tempPath).size : 0;
           try { if (exists) fs.unlinkSync(tempPath); } catch (e) {}
-          resolve({ code, stdout, stderr, fileCreated: exists, fileSize: size, elapsedSec: (Date.now() - t0) / 1000 });
+          resolve({ code, args, stdout, stderr, fileCreated: exists, fileSize: size, elapsedSec: (Date.now() - t0) / 1000 });
         });
         proc.on('error', err => {
           clearTimeout(t);
-          resolve({ error: err.message, elapsedSec: (Date.now() - t0) / 1000 });
+          resolve({ error: err.message, args, elapsedSec: (Date.now() - t0) / 1000 });
         });
       });
 
