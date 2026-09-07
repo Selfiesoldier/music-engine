@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { CONFIG } from '../config.js';
 
 export class SilenceEngine {
@@ -32,17 +33,31 @@ export class SilenceEngine {
   loadTransitionTrack() {
     try {
       const pcmPath = path.join(CONFIG.ROOT_DIR, 'assets', 'transition.pcm');
+      const m4aPath = path.join(CONFIG.ROOT_DIR, 'assets', 'transition.m4a');
+
+      if (!fs.existsSync(pcmPath) && fs.existsSync(m4aPath)) {
+        console.log('🔄 [TransitionEngine] transition.pcm missing, generating from transition.m4a using ffmpeg...');
+        try {
+          execSync(`ffmpeg -y -i "${m4aPath}" -f s16le -ar 44100 -ac 2 "${pcmPath}"`, { stdio: 'ignore' });
+        } catch (convErr) {
+          console.warn('⚠️ [TransitionEngine] ffmpeg audio conversion warning:', convErr.message);
+        }
+      }
+
       if (fs.existsSync(pcmPath)) {
         const raw = fs.readFileSync(pcmPath);
-        // Load max 20s of lofi loop (~3.5 MB) to preserve RAM in low-memory containers
-        const maxBytes = 20 * 176400;
+        // Load up to 30s of lofi loop (~5.2 MB) to preserve RAM in low-memory containers
+        const maxBytes = 30 * 176400;
         const targetLen = Math.min(raw.length, maxBytes);
         const alignedLen = targetLen - (targetLen % this.chunkSize);
         this.transitionPcm = Buffer.allocUnsafe(alignedLen);
         raw.copy(this.transitionPcm, 0, 0, alignedLen);
         console.log(`☕ [TransitionEngine] Loaded seamless Lofi loop (${(this.transitionPcm.length / 1024 / 1024).toFixed(2)} MB, aligned to ${this.chunkSize} bytes)`);
+      } else {
+        console.warn('⚠️ [TransitionEngine] No transition track found at assets/transition.pcm or transition.m4a');
       }
     } catch (e) {
+      console.error('⚠️ [TransitionEngine] Error loading transition track:', e.message);
       this.transitionPcm = null;
     }
   }

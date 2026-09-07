@@ -8,5 +8,3 @@ cache/tts/*
 scratch/
 *.exe
 *.tmp.*
-assets/transition.pcm
-assets/transition.m4a
