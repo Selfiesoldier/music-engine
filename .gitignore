@@ -1,0 +1,12 @@
+node_modules/
+cache/tracks/*
+cache/tts/*
+!cache/tracks/.gitkeep
+!cache/tts/.gitkeep
+.env.local
+*.log
+scratch/
+*.exe
+*.tmp.*
+assets/transition.pcm
+assets/transition.m4a

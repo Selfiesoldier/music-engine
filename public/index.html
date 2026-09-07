@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Engine v3.0 | Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: rgba(22, 27, 34, 0.85);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.4);
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --border: rgba(48, 54, 61, 0.7);
+      --success: #238636;
+      --dj-color: #ec4899;
+      --dj-glow: rgba(236, 72, 153, 0.35);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
+    body {
+      background: radial-gradient(circle at top, #161b22, #0d1117);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px 20px;
+    }
+    .container { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 20px; }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .badge {
+      background: rgba(35, 134, 54, 0.2);
+      color: #3fb950;
+      border: 1px solid rgba(63, 185, 80, 0.3);
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+    }
+    .badge-dj {
+      background: rgba(236, 72, 153, 0.15);
+      color: #f472b6;
+      border: 1px solid rgba(244, 114, 182, 0.3);
+      display: none;
+      align-items: center;
+      gap: 6px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .player-card, .dj-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 16px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+    }
+    .thumbnail {
+      width: 140px;
+      height: 140px;
+      border-radius: 16px;
+      object-fit: cover;
+      box-shadow: 0 6px 20px var(--accent-glow);
+      background: #21262d;
+    }
+    .track-title { font-size: 20px; font-weight: 600; max-width: 90%; word-break: break-word; }
+    .track-artist { font-size: 14px; color: var(--text-muted); }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #21262d;
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+      transition: width 0.5s ease;
+    }
+    .time-info { width: 100%; display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
+    .filters-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+    .filter-btn {
+      background: #21262d;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .controls { display: flex; gap: 12px; margin-top: 10px; }
+    .btn {
+      padding: 10px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: transform 0.1s, opacity 0.2s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-skip { background: #3b82f6; color: white; }
+    .btn-stop { background: #ef4444; color: white; }
+    .btn-dj { background: linear-gradient(135deg, #ec4899, #8b5cf6); color: white; font-weight: 600; }
+    
+    .dj-header {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    .dj-title { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .dj-controls-grid {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+    .select-box {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      outline: none;
+      width: 100%;
+    }
+    .toggle-btn {
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #21262d;
+      color: var(--text);
+      transition: all 0.2s;
+    }
+    .toggle-btn.active {
+      background: rgba(35, 134, 54, 0.25);
+      border-color: #3fb950;
+      color: #3fb950;
+    }
+    .search-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px 20px;
+      display: flex;
+      gap: 10px;
+    }
+    .search-input {
+      flex: 1;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: white;
+      outline: none;
+    }
+    .search-btn { background: var(--accent); color: white; }
+    audio { width: 100%; border-radius: 10px; margin-top: 10px; }
+    .dj-announcement-toast {
+      width: 100%;
+      background: rgba(236, 72, 153, 0.12);
+      border: 1px solid rgba(236, 72, 153, 0.3);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      color: #f9a8d4;
+      display: none;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h2>🎧 Highrise Music Engine</h2>
+        <small style="color: var(--text-muted)">v3.0 Modular Architecture • Hyper-Fast Auto-Reconnect</small>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <div id="publicUrlBadge" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border-color: rgba(129, 140, 248, 0.3); cursor: pointer; display: none;" onclick="copyPublicUrl()" title="Click to copy Highrise Stream URL">🌐 Highrise URL (Click to Copy)</div>
+        <div id="djSpeakingBadge" class="badge badge-dj">🎙️ DJ Speaking...</div>
+        <div id="statusBadge" class="badge">● Streaming Live</div>
+      </div>
+    </div>
+
+    <!-- Main Player Card -->
+    <div class="player-card">
+      <img id="trackThumb" class="thumbnail" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300" alt="Album Art">
+      <div class="track-title" id="trackTitle">Connecting to stream...</div>
+      <div class="track-artist" id="trackArtist">Waiting for music</div>
+
+      <div class="progress-bar">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <div class="time-info">
+        <span id="timeElapsed">0:00</span>
+        <span id="timeTotal">0:00</span>
+      </div>
+
+      <audio id="audioPlayer" controls src="/stream"></audio>
+
+      <div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;">Audio Effects (DSP Filter):</div>
+      <div class="filters-row" id="filtersRow">
+        <button class="filter-btn active" onclick="setFilter('normal')">Normal</button>
+        <button class="filter-btn" onclick="setFilter('bassboost')">🔊 Bass Boost</button>
+        <button class="filter-btn" onclick="setFilter('nightcore')">⚡ Nightcore</button>
+        <button class="filter-btn" onclick="setFilter('vaporwave')">🌌 Vaporwave</button>
+        <button class="filter-btn" onclick="setFilter('8d')">🎧 8D Audio</button>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-skip" onclick="skipTrack()">⏭️ Skip</button>
+        <button class="btn btn-stop" onclick="stopTrack()">⏹️ Stop</button>
+      </div>
+    </div>
+
+    <!-- Neural DJ Voice Settings Card -->
+    <div class="dj-card">
+      <div class="dj-header">
+        <div class="dj-title">🎙️ Neural Radio DJ Personality</div>
+        <div style="display: flex; gap: 8px;">
+          <button id="elevenLabsToggleBtn" class="toggle-btn active" onclick="toggleElevenLabs()">Studio AI: ON</button>
+          <button id="djToggleBtn" class="toggle-btn active" onclick="toggleDjIntro()">DJ Intros: ON</button>
+        </div>
+      </div>
+
+      <div class="dj-announcement-toast" id="djToast">
+        <strong>🎙️ DJ Announced:</strong> <span id="djToastText"></span>
+      </div>
+
+      <div class="dj-controls-grid">
+        <div style="text-align: left;">
+          <label style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block;">DJ Voice Preset:</label>
+          <select id="djVoiceSelect" class="select-box" onchange="updateDjVoice()">
+            <optgroup label="🌟 ElevenLabs Studio AI DJ (Ultra-Realistic)">
+              <option value="brian">🎙️ Brian (Deep BBC / Radio Narrator)</option>
+              <option value="daniel">📻 Daniel (Authoritative Broadcaster)</option>
+              <option value="adam">🎙️ Adam / Chris (Deep Radio Male)</option>
+              <option value="liam">⚡ Liam (Young Confident Club DJ)</option>
+              <option value="roger">🔥 Roger (Hype Energetic Announcer)</option>
+              <option value="rachel">🎧 Rachel / Jenny (Warm Female Host)</option>
+              <option value="sarah">🌟 Sarah (Modern Station DJ)</option>
+              <option value="jessica">✨ Jessica (Upbeat American Female)</option>
+              <option value="lily">👒 Lily (Warm Velvety British)</option>
+              <option value="river">🌌 River (Late-Night Chillout Host)</option>
+              <option value="bill">☕ Bill (Trustworthy Mature Host)</option>
+              <option value="antoni">⚡ Antoni (Energetic Male)</option>
+              <option value="josh">🧢 Josh (Young Dynamic Male)</option>
+              <option value="bella">✨ Bella (Expressive Female)</option>
+              <option value="arnold">🎬 Arnold (Deep Action Narrator)</option>
+              <option value="george">🎩 George / Ryan (British Male)</option>
+              <option value="elli">👒 Elli / Sonia (British Female)</option>
+              <option value="charlie">☕ Charlie / Guy (Casual Relaxed)</option>
+            </optgroup>
+            <optgroup label="🌐 Google TTS Accents (100% Free / Unlimited)">
+              <option value="us">🇺🇸 US English (American)</option>
+              <option value="uk">🇬🇧 UK English (British)</option>
+              <option value="au">🇦🇺 Australian English</option>
+              <option value="in">🇮🇳 Indian English</option>
+              <option value="es">🇪🇸 Spanish</option>
+              <option value="fr">🇫🇷 French</option>
+              <option value="hi">🇮🇳 Hindi</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div style="text-align: left; display: flex; flex-direction: column; justify-content: flex-end;">
+          <button class="btn btn-dj" style="width: 100%;" onclick="announceCurrentSong()">
+            📢 Announce Current Song
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick TTS Shoutout test -->
+      <div style="width: 100%; display: flex; gap: 8px; margin-top: 6px;">
+        <input type="text" id="ttsInput" class="search-input" placeholder="Type a custom announcement or shoutout..." onkeydown="if(event.key==='Enter') speakCustom()">
+        <button class="btn" style="background: #374151; color: white;" onclick="speakCustom()">Say on Stream</button>
+      </div>
+    </div>
+
+    <!-- Search / Queue Card -->
+    <div class="search-card">
+      <input type="text" id="searchInput" class="search-input" placeholder="Search song name or YouTube link..." onkeydown="if(event.key==='Enter') playSong()">
+      <button class="btn search-btn" onclick="playSong()">Play Song</button>
+    </div>
+  </div>
+
+  <script>
+    let djEnabled = true;
+    let djVoice = 'chris';
+    let userWantsAudio = false;
+    let isReconnecting = false;
+    let sseClient = null;
+
+    const audio = document.getElementById('audioPlayer');
+    const statusBadge = document.getElementById('statusBadge');
+
+    audio.addEventListener('play', () => {
+      userWantsAudio = true;
+      isReconnecting = false;
+    });
+
+    audio.addEventListener('pause', () => {
+      // If paused due to error/stall, we will auto-resume if user wants audio
+    });
+
+    function copyPublicUrl() {
+      if (window.publicStreamUrl) {
+        navigator.clipboard.writeText(window.publicStreamUrl);
+        const b = document.getElementById('publicUrlBadge');
+        const old = b.textContent;
+        b.textContent = '✅ Copied Highrise URL!';
+        setTimeout(() => b.textContent = old, 2000);
+      }
+    }
+
+    function formatSec(sec) {
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    async function updateStatus() {
+      try {
+        const res = await fetch('/current');
+        if (!res.ok) throw new Error('Server not OK');
+        const data = await res.json();
+        
+        if (data.metadata) {
+          document.getElementById('trackTitle').textContent = data.metadata.title;
+          const reqStr = data.metadata.requester && data.metadata.requester !== 'User' ? ` • Req: ${data.metadata.requester}` : '';
+          document.getElementById('trackArtist').textContent = (data.metadata.artist || 'Unknown') + reqStr;
+          if (data.metadata.thumbnail) {
+            document.getElementById('trackThumb').src = data.metadata.thumbnail;
+          }
+          const elapsedSec = Math.floor((data.serverElapsed || 0) / 1000);
+          const totalSec = data.metadata.durationSeconds || 1;
+          document.getElementById('timeElapsed').textContent = formatSec(elapsedSec);
+          document.getElementById('timeTotal').textContent = formatSec(totalSec);
+          const pct = Math.min(100, Math.max(0, (elapsedSec / totalSec) * 100));
+          document.getElementById('progressFill').style.width = `${pct}%`;
+        } else {
+          document.getElementById('trackTitle').textContent = data.title || 'Idle';
+          document.getElementById('trackArtist').textContent = 'Waiting for music';
+          document.getElementById('progressFill').style.width = '0%';
+        }
+
+        if (data.publicStreamUrl) {
+          window.publicStreamUrl = data.publicStreamUrl;
+          const pubBadge = document.getElementById('publicUrlBadge');
+          pubBadge.style.display = 'inline-flex';
+        }
+
+        if (data.djConfig) {
+          djEnabled = Boolean(data.djConfig.enabled);
+          djVoice = data.djConfig.voice || 'chris';
+          const btn = document.getElementById('djToggleBtn');
+          btn.textContent = `DJ Intros: ${djEnabled ? 'ON' : 'OFF'}`;
+          btn.classList.toggle('active', djEnabled);
+          document.getElementById('djVoiceSelect').value = djVoice;
+        }
+
+        if (!isReconnecting) {
+          statusBadge.textContent = '● Streaming Live';
+          statusBadge.style.borderColor = 'rgba(63, 185, 80, 0.3)';
+          statusBadge.style.color = '#3fb950';
+        }
+      } catch (err) {
+        // Server unreachable
+        triggerFastReconnect();
+      }
+    }
+
+    // Hyper-Fast Reconnect Watchdog (Polls every 500ms when down)
+    function triggerFastReconnect() {
+      if (isReconnecting) return;
+      isReconnecting = true;
+      statusBadge.textContent = '🔄 Reconnecting...';
+      statusBadge.style.borderColor = '#eab308';
+      statusBadge.style.color = '#eab308';
+
+      const pollFast = async () => {
+        try {
+          const res = await fetch('/health');
+          if (res.ok) {
+            const data = await res.json();
+            console.log('✅ Server back online! Resuming stream immediately...');
+            
+            // Reconnect audio player with cache-busting timestamp
+            audio.src = '/stream?t=' + Date.now();
+            if (userWantsAudio) {
+              try { await audio.play(); } catch (e) {}
+            }
+
+            // Reconnect SSE
+            setupSSE();
+
+            isReconnecting = false;
+            statusBadge.textContent = '● Streaming Live';
+            statusBadge.style.borderColor = 'rgba(63, 185, 80, 0.3)';
+            statusBadge.style.color = '#3fb950';
+            updateStatus();
+    updateAuthBadge();
+            return;
+          }
+        } catch (e) {}
+
+        // Retry in 500ms
+        setTimeout(pollFast, 500);
+      };
+
+      pollFast();
+    }
+
+    audio.addEventListener('error', () => {
+      if (userWantsAudio) triggerFastReconnect();
+    });
+    audio.addEventListener('ended', () => {
+      if (userWantsAudio) triggerFastReconnect();
+    });
+
+    function setupSSE() {
+      if (sseClient) {
+        try { sseClient.close(); } catch (e) {}
+      }
+      sseClient = new EventSource('/api/events');
+      sseClient.onmessage = (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.event === 'dj_speaking') {
+            showDjToast(payload.data.text);
+          }
+          updateStatus();
+        } catch (err) {}
+      };
+      // Native EventSource handles auto-reconnect without interrupting audio playback
+    }
+
+    let elevenLabsEnabled = true;
+
+    async function initElevenLabsStatus() {
+      try {
+        const res = await fetch('/api/tts/elevenlabs');
+        if (res.ok) {
+          const data = await res.json();
+          elevenLabsEnabled = data.enabled;
+          const btn = document.getElementById('elevenLabsToggleBtn');
+          if (btn) {
+            btn.textContent = `Studio AI: ${elevenLabsEnabled ? 'ON' : 'OFF'}`;
+            btn.classList.toggle('active', elevenLabsEnabled);
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function toggleElevenLabs() {
+      elevenLabsEnabled = !elevenLabsEnabled;
+      await apiFetch('/api/tts/elevenlabs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: elevenLabsEnabled })
+      });
+      const btn = document.getElementById('elevenLabsToggleBtn');
+      if (btn) {
+        btn.textContent = `Studio AI: ${elevenLabsEnabled ? 'ON' : 'OFF'}`;
+        btn.classList.toggle('active', elevenLabsEnabled);
+      }
+    }
+
+    async function toggleDjIntro() {
+      djEnabled = !djEnabled;
+      await apiFetch('/api/tts/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: djEnabled, voice: djVoice })
+      });
+      const btn = document.getElementById('djToggleBtn');
+      btn.textContent = `DJ Intros: ${djEnabled ? 'ON' : 'OFF'}`;
+      btn.classList.toggle('active', djEnabled);
+    }
+
+    async function updateDjVoice() {
+      djVoice = document.getElementById('djVoiceSelect').value;
+      await apiFetch('/api/tts/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: djEnabled, voice: djVoice })
+      });
+    }
+
+    async function announceCurrentSong() {
+      const res = await apiFetch('/api/announce-current', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: djVoice })
+      });
+      const data = await res.json();
+      if (data.speechText) {
+        showDjToast(data.speechText);
+      }
+    }
+
+    async function speakCustom() {
+      const text = document.getElementById('ttsInput').value.trim();
+      if (!text) return;
+      document.getElementById('ttsInput').value = '';
+      await apiFetch('/api/tts/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: djVoice })
+      });
+      showDjToast(text);
+    }
+
+    function showDjToast(text) {
+      const toast = document.getElementById('djToast');
+      const toastText = document.getElementById('djToastText');
+      const badge = document.getElementById('djSpeakingBadge');
+      toastText.textContent = text;
+      toast.style.display = 'block';
+      badge.style.display = 'flex';
+      setTimeout(() => {
+        toast.style.display = 'none';
+        badge.style.display = 'none';
+      }, 7000);
+    }
+
+    async function setFilter(name) {
+      await apiFetch('/api/filter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filter: name })
+      });
+      document.querySelectorAll('.filter-btn').forEach(b => {
+        b.classList.toggle('active', b.textContent.toLowerCase().includes(name));
+      });
+    }
+
+    async function playSong() {
+      const q = document.getElementById('searchInput').value.trim();
+      if (!q) return;
+      document.getElementById('searchInput').value = '';
+      await apiFetch('/api/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q })
+      });
+      setTimeout(updateStatus, 500);
+    }
+
+    async function skipTrack() {
+      await apiFetch('/api/skip', { method: 'POST' });
+      setTimeout(updateStatus, 500);
+    }
+
+    async function stopTrack() {
+      await apiFetch('/api/stop', { method: 'POST' });
+      setTimeout(updateStatus, 500);
+    }
+
+    // Active 1-second health ping watchdog
+    setInterval(updateStatus, 1000);
+    setupSSE();
+    updateStatus();
+    initElevenLabsStatus();
+  </script>
+</body>
+</html>

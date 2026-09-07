@@ -1,0 +1,11 @@
+node_modules
+cache/tracks/*
+cache/tts/*
+!cache/tracks/.gitkeep
+!cache/tts/.gitkeep
+.git
+.env.local
+*.log
+scratch
+*.exe
+*.tmp.*

@@ -1,0 +1,71 @@
+{
+  "users": {
+    "6a7adddacc3fa67f5530833c": {
+      "userId": "6a7adddacc3fa67f5530833c",
+      "username": "accountrecovery",
+      "tickets": 28,
+      "isVip": false,
+      "vipExpiresAt": null,
+      "lastDailyClaim": 1788715794422,
+      "totalTippedGold": 10,
+      "songsPlayed": 2,
+      "createdAt": 1788715794421
+    }
+  },
+  "transactions": [
+    {
+      "id": "tx_1788724461789_ui20",
+      "userId": "6a7adddacc3fa67f5530833c",
+      "type": "DEBIT",
+      "amount": 1,
+      "details": "Song request: \"Main nahi toh kaun\"",
+      "balanceAfter": 28,
+      "timestamp": 1788724461789
+    },
+    {
+      "id": "tx_1788724093107_dzug",
+      "userId": "6a7adddacc3fa67f5530833c",
+      "type": "CREDIT",
+      "amount": 5,
+      "details": "admin_gift",
+      "balanceAfter": 29,
+      "timestamp": 1788724093107
+    },
+    {
+      "id": "tx_1788724091058_rix7",
+      "userId": "6a7adddacc3fa67f5530833c",
+      "type": "TIP_REWARD",
+      "amount": 10,
+      "details": "Tipped 10 gold",
+      "balanceAfter": 24,
+      "timestamp": 1788724091058
+    },
+    {
+      "id": "tx_1788723939763_kx1i",
+      "userId": "6a7adddacc3fa67f5530833c",
+      "type": "DEBIT",
+      "amount": 1,
+      "details": "Song request: \"Never Gonna Give You Up\"",
+      "balanceAfter": 14,
+      "timestamp": 1788723939763
+    },
+    {
+      "id": "tx_1788723931373_ier3",
+      "userId": "6a7adddacc3fa67f5530833c",
+      "type": "CREDIT",
+      "amount": 5,
+      "details": "admin_gift",
+      "balanceAfter": 15,
+      "timestamp": 1788723931373
+    },
+    {
+      "id": "tx_1788715794422_mhq7",
+      "userId": "6a7adddacc3fa67f5530833c",
+      "type": "DAILY_REWARD",
+      "amount": 10,
+      "details": "Claimed daily reward (10 tickets)",
+      "balanceAfter": 10,
+      "timestamp": 1788715794422
+    }
+  ]
+}

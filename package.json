@@ -1,0 +1,37 @@
+{
+  "name": "musicbot-engine",
+  "version": "3.0.0",
+  "type": "module",
+  "description": "High-performance modular audio streaming engine with smart LRU caching, DSP filters, and REST/WebSocket API",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --max-old-space-size=192 --expose-gc src/index.js",
+    "dev": "node --watch --expose-gc src/index.js",
+    "test:stream": "node test/test_stream.mjs",
+    "test:cache": "node test/test_cache.mjs"
+  },
+  "keywords": [
+    "audio-streaming",
+    "highrise",
+    "music-bot",
+    "radio",
+    "ffmpeg",
+    "mp3"
+  ],
+  "author": "Sanif",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "msedge-tts": "^1.2.5",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.0",
+    "yt-search": "^2.12.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
