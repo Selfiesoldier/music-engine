@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -8,12 +8,28 @@ const __dirname = path.dirname(__filename);
 import fs from 'fs';
 
 const RENDER_BOT_URL = process.env.RENDER_BOT_URL || 'https://musicbot12-ld6i.onrender.com';
-const CLOUDFLARED_PATH = process.platform === 'win32'
-  ? path.join(__dirname, 'cloudflared.exe')
-  : (fs.existsSync(path.join(__dirname, 'cloudflared')) ? path.join(__dirname, 'cloudflared') : 'cloudflared');
+
+function getCloudflaredPath() {
+  if (process.platform === 'win32') {
+    return path.join(__dirname, 'cloudflared.exe');
+  }
+  // Check system PATH first (e.g. native Termux package)
+  try {
+    execSync('which cloudflared', { stdio: 'ignore' });
+    return 'cloudflared';
+  } catch (_) {}
+  
+  if (fs.existsSync(path.join(__dirname, 'cloudflared'))) {
+    return path.join(__dirname, 'cloudflared');
+  }
+  return 'cloudflared';
+}
+
+const CLOUDFLARED_PATH = getCloudflaredPath();
 const BRIDGE_SCRIPT = path.join(__dirname, 'residential_bridge.js');
 
 console.log('🚀 Starting Residential Audio Bridge & Cloudflare Tunnel...');
+console.log(`📍 Using cloudflared: ${CLOUDFLARED_PATH}`);
 
 // 1. Start the local bridge HTTP server
 const bridgeProcess = spawn('node', [BRIDGE_SCRIPT], {
@@ -59,8 +75,12 @@ function registerWithRender(tunnelUrl) {
 
 // Keep-alive heartbeat every 60s
 setInterval(() => {
-  if (currentTunnelUrl) {
-    registerWithRender(currentTunnelUrl);
+  if (currentTunnelUrl && registered) {
+    fetch(`${RENDER_BOT_URL}/api/register-bridge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentTunnelUrl })
+    }).catch(() => {});
   }
 }, 60000);
 
@@ -68,9 +88,9 @@ function handleOutput(data) {
   const text = data.toString();
   process.stdout.write(text);
 
-  // Match https://[subdomain].trycloudflare.com
-  const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
-  if (match && !registered) {
+  // Match https://[subdomain].trycloudflare.com (exclude api.trycloudflare.com)
+  const match = text.match(/https:\/\/([a-zA-Z0-9-]+)\.trycloudflare\.com/);
+  if (match && match[1] !== 'api' && !registered) {
     registerWithRender(match[0]);
   }
 }
