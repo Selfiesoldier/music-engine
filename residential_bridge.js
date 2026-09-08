@@ -60,11 +60,11 @@ const server = http.createServer(async (req, res) => {
     try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
 
     const args = [
-      '-f', 'ba[ext=m4a]/ba[ext=webm]/ba',
+      '-f', 'ba[ext=m4a]/ba[ext=webm]/ba/b/best',
       '-o', tempFile,
       '--no-playlist',
       '--no-warnings',
-      '--extractor-args', 'youtube:player_client=visionos,android',
+      '--extractor-args', 'youtube:player_client=android,web,tv,visionos',
       targetUrl
     ];
 
