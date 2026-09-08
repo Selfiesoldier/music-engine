@@ -37,8 +37,8 @@ const bridgeProcess = spawn('node', [BRIDGE_SCRIPT], {
   stdio: 'inherit'
 });
 
-// 2. Start Cloudflare Tunnel pointing to local port 8888
-const cfProcess = spawn(CLOUDFLARED_PATH, ['tunnel', '--url', 'http://127.0.0.1:8888'], {
+// 2. Start Cloudflare Tunnel pointing to local port 8888 (force IPv4 edge to avoid Termux IPv6 DNS issues)
+const cfProcess = spawn(CLOUDFLARED_PATH, ['tunnel', '--edge-ip-version', '4', '--url', 'http://127.0.0.1:8888'], {
   cwd: __dirname,
   stdio: ['ignore', 'pipe', 'pipe']
 });

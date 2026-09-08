@@ -19,6 +19,12 @@ fi
 
 # In Termux, install the native cloudflared package built for Android Bionic DNS
 if command -v pkg &> /dev/null; then
+    # Ensure Termux has working DNS servers for Go binaries like cloudflared
+    if [ -n "$PREFIX" ]; then
+        mkdir -p "$PREFIX/etc"
+        echo "nameserver 1.1.1.1" > "$PREFIX/etc/resolv.conf"
+        echo "nameserver 8.8.8.8" >> "$PREFIX/etc/resolv.conf"
+    fi
     if ! command -v cloudflared &> /dev/null; then
         echo "📦 Installing native Termux cloudflared..."
         pkg install -y cloudflared
