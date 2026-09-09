@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 
 import fs from 'fs';
 
-const RENDER_BOT_URL = process.env.RENDER_BOT_URL || 'https://musicbot12-ld6i.onrender.com';
+const RENDER_BOT_URL = process.env.BOT_SERVER_URL || process.env.RENDER_BOT_URL || 'http://92.118.206.4:30191';
 
 function getCloudflaredPath() {
   if (process.platform === 'win32') {

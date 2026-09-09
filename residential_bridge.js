@@ -59,12 +59,17 @@ const server = http.createServer(async (req, res) => {
     const tempFile = path.join(CACHE_DIR, `${key}.temp.m4a`);
     try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
 
+    const cookieFile = fs.existsSync(path.join(__dirname, 'cookies.txt'))
+      ? path.join(__dirname, 'cookies.txt')
+      : (fs.existsSync(path.join(__dirname, 'cookies.master.txt')) ? path.join(__dirname, 'cookies.master.txt') : null);
+
     const args = [
       '-f', 'ba[ext=m4a]/ba[ext=webm]/ba/b/best',
       '-o', tempFile,
       '--no-playlist',
       '--no-warnings',
       '--extractor-args', 'youtube:player_client=android,web,tv,visionos',
+      ...(cookieFile ? ['--cookies', cookieFile] : []),
       targetUrl
     ];
 

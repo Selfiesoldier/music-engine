@@ -9,3 +9,4 @@ scratch/
 *.exe
 *.tmp.*
 cache/active_runtime_cookies.txt
+bridge_cache/
