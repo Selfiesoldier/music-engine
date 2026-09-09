@@ -74,44 +74,64 @@ const server = http.createServer(async (req, res) => {
     ];
 
     console.log(`[Bridge] 🚀 Downloading original track via residential IP...`);
-    const ytProcess = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    
+    function runDownload(useCookies = true) {
+      const currentArgs = [
+        '-f', 'ba[ext=m4a]/ba[ext=webm]/bestaudio/ba/b/best',
+        '-o', tempFile,
+        '--no-playlist',
+        '--no-warnings',
+        '--extractor-args', 'youtube:player_client=android,web,tv,visionos',
+        ...(useCookies && cookieFile ? ['--cookies', cookieFile] : []),
+        targetUrl
+      ];
 
-    let errBuffer = '';
-    ytProcess.stderr.on('data', (d) => { errBuffer += d.toString(); });
+      const ytProcess = spawn(YTDLP_PATH, currentArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let errBuffer = '';
+      ytProcess.stderr.on('data', (d) => { errBuffer += d.toString(); });
 
-    ytProcess.on('close', (code) => {
-      if (code !== 0 || !fs.existsSync(tempFile)) {
-        console.error(`[Bridge] ❌ Download failed (code ${code}): ${errBuffer.slice(0, 200)}`);
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Download failed', details: errBuffer }));
-      }
+      ytProcess.on('close', (code) => {
+        // If failed with cookie error "The page needs to be reloaded" or bot check, retry without cookies!
+        if ((code !== 0 || !fs.existsSync(tempFile)) && useCookies && cookieFile && (errBuffer.includes('The page needs to be reloaded') || errBuffer.includes('Sign in') || errBuffer.includes('bot'))) {
+          console.warn(`[Bridge] ⚠️ Cookies triggered YouTube reload requirement. Retrying clean without cookies...`);
+          try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+          return runDownload(false);
+        }
 
-      // Rename temp file to cached file
-      try {
-        fs.renameSync(tempFile, cachedFile);
-      } catch (_) {
-        // In case of rename error across handles
-      }
+        if (code !== 0 || !fs.existsSync(tempFile)) {
+          console.error(`[Bridge] ❌ Download failed (code ${code}): ${errBuffer.slice(0, 200)}`);
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Download failed', details: errBuffer }));
+        }
 
-      const fileToStream = fs.existsSync(cachedFile) ? cachedFile : tempFile;
-      const stats = fs.statSync(fileToStream);
+        // Rename temp file to cached file
+        try {
+          fs.renameSync(tempFile, cachedFile);
+        } catch (_) {}
 
-      console.log(`[Bridge] ✅ Completed download (${(stats.size / 1024 / 1024).toFixed(2)} MB). Streaming to Render...`);
-      res.writeHead(200, {
-        'Content-Type': 'audio/mp4',
-        'Content-Length': stats.size,
-        'Cache-Control': 'public, max-age=86400',
-        'X-Bridge-Source': 'residential-fresh'
+        const fileToStream = fs.existsSync(cachedFile) ? cachedFile : tempFile;
+        const stats = fs.statSync(fileToStream);
+
+        console.log(`[Bridge] ✅ Completed download (${(stats.size / 1024 / 1024).toFixed(2)} MB). Streaming to bot server...`);
+        res.writeHead(200, {
+          'Content-Type': 'audio/mp4',
+          'Content-Length': stats.size,
+          'Cache-Control': 'public, max-age=86400',
+          'X-Bridge-Source': useCookies ? 'residential-fresh' : 'residential-nocookies'
+        });
+
+        fs.createReadStream(fileToStream).pipe(res);
       });
 
-      fs.createReadStream(fileToStream).pipe(res);
-    });
+      req.on('close', () => {
+        if (!ytProcess.killed) {
+          try { ytProcess.kill(); } catch (_) {}
+        }
+      });
+    }
 
-    req.on('close', () => {
-      if (!ytProcess.killed) {
-        try { ytProcess.kill(); } catch (_) {}
-      }
-    });
+    runDownload(true);
+    return;
 
     return;
   }
