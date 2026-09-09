@@ -17,7 +17,37 @@ if (!fs.existsSync(CACHE_DIR)) {
 }
 
 function getCacheKey(targetUrl) {
+  const ytMatch = (targetUrl || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  if (ytMatch) return `yt_${ytMatch[1]}`;
   return crypto.createHash('md5').update(targetUrl).digest('hex');
+}
+
+function pruneBridgeCache() {
+  try {
+    const files = fs.readdirSync(CACHE_DIR);
+    const m4aFiles = [];
+    let totalBytes = 0;
+    for (const f of files) {
+      if (f.endsWith('.m4a') && !f.includes('.temp.')) {
+        const full = path.join(CACHE_DIR, f);
+        try {
+          const st = fs.statSync(full);
+          m4aFiles.push({ path: full, size: st.size, mtime: st.mtimeMs });
+          totalBytes += st.size;
+        } catch (_) {}
+      }
+    }
+    m4aFiles.sort((a, b) => a.mtime - b.mtime);
+    // Keep max 25 tracks or 150 MB on Termux
+    while ((m4aFiles.length > 25 || totalBytes > 150 * 1024 * 1024) && m4aFiles.length > 5) {
+      const oldest = m4aFiles.shift();
+      try {
+        fs.unlinkSync(oldest.path);
+        totalBytes -= oldest.size;
+        console.log(`[Bridge] 🧹 Evicted LRU cached track from Termux: ${path.basename(oldest.path)}`);
+      } catch (_) {}
+    }
+  } catch (_) {}
 }
 
 const server = http.createServer(async (req, res) => {
@@ -55,83 +85,65 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // Download complete audio file using residential IP
-    const tempFile = path.join(CACHE_DIR, `${key}.temp.m4a`);
-    try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+    // Download audio directly via residential IP (NO COOKIES to eliminate timeout races & reload errors)
+    const tempFile = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.m4a`);
 
-    const cookieFile = fs.existsSync(path.join(__dirname, 'cookies.txt'))
-      ? path.join(__dirname, 'cookies.txt')
-      : (fs.existsSync(path.join(__dirname, 'cookies.master.txt')) ? path.join(__dirname, 'cookies.master.txt') : null);
-
-    const args = [
-      '-f', 'ba[ext=m4a]/ba[ext=webm]/ba/b/best',
+    const currentArgs = [
+      '-f', 'ba[ext=m4a]/ba[ext=webm]/bestaudio/ba/b/best',
       '-o', tempFile,
+      '--no-video',
       '--no-playlist',
       '--no-warnings',
+      '--force-ipv4',
       '--extractor-args', 'youtube:player_client=android,web,tv,visionos',
-      ...(cookieFile ? ['--cookies', cookieFile] : []),
       targetUrl
     ];
 
-    console.log(`[Bridge] 🚀 Downloading original track via residential IP...`);
-    
-    function runDownload(useCookies = true) {
-      const currentArgs = [
-        '-f', 'ba[ext=m4a]/ba[ext=webm]/bestaudio/ba/b/best',
-        '-o', tempFile,
-        '--no-playlist',
-        '--no-warnings',
-        '--extractor-args', 'youtube:player_client=android,web,tv,visionos',
-        ...(useCookies && cookieFile ? ['--cookies', cookieFile] : []),
-        targetUrl
-      ];
+    console.log(`[Bridge] 🚀 Downloading original track via residential IP (clean direct mode, no cookies)...`);
 
-      const ytProcess = spawn(YTDLP_PATH, currentArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let errBuffer = '';
-      ytProcess.stderr.on('data', (d) => { errBuffer += d.toString(); });
+    const ytProcess = spawn(YTDLP_PATH, currentArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let errBuffer = '';
+    ytProcess.stderr.on('data', (d) => { errBuffer += d.toString(); });
 
-      ytProcess.on('close', (code) => {
-        // If failed with cookie error "The page needs to be reloaded" or bot check, retry without cookies!
-        if ((code !== 0 || !fs.existsSync(tempFile)) && useCookies && cookieFile && (errBuffer.includes('The page needs to be reloaded') || errBuffer.includes('Sign in') || errBuffer.includes('bot'))) {
-          console.warn(`[Bridge] ⚠️ Cookies triggered YouTube reload requirement. Retrying clean without cookies...`);
-          try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
-          return runDownload(false);
-        }
-
-        if (code !== 0 || !fs.existsSync(tempFile)) {
-          console.error(`[Bridge] ❌ Download failed (code ${code}): ${errBuffer.slice(0, 200)}`);
+    ytProcess.on('close', (code, signal) => {
+      if (code !== 0 || !fs.existsSync(tempFile)) {
+        console.error(`[Bridge] ❌ Download failed (code ${code}, signal ${signal}): ${errBuffer.slice(0, 200)}`);
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        if (!res.headersSent) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Download failed', details: errBuffer }));
+          res.end(JSON.stringify({ error: 'Download failed', code, signal, details: errBuffer.slice(-300) }));
         }
+        return;
+      }
 
-        // Rename temp file to cached file
-        try {
-          fs.renameSync(tempFile, cachedFile);
-        } catch (_) {}
+      // Rename temp file to cached file
+      try {
+        fs.renameSync(tempFile, cachedFile);
+      } catch (_) {}
 
-        const fileToStream = fs.existsSync(cachedFile) ? cachedFile : tempFile;
-        const stats = fs.statSync(fileToStream);
+      const fileToStream = fs.existsSync(cachedFile) ? cachedFile : tempFile;
+      const stats = fs.statSync(fileToStream);
 
-        console.log(`[Bridge] ✅ Completed download (${(stats.size / 1024 / 1024).toFixed(2)} MB). Streaming to bot server...`);
+      pruneBridgeCache();
+
+      console.log(`[Bridge] ✅ Completed download (${(stats.size / 1024 / 1024).toFixed(2)} MB). Streaming to bot server...`);
+      if (!res.headersSent) {
         res.writeHead(200, {
           'Content-Type': 'audio/mp4',
           'Content-Length': stats.size,
           'Cache-Control': 'public, max-age=86400',
-          'X-Bridge-Source': useCookies ? 'residential-fresh' : 'residential-nocookies'
+          'X-Bridge-Source': 'residential-direct'
         });
-
         fs.createReadStream(fileToStream).pipe(res);
-      });
+      }
+    });
 
-      req.on('close', () => {
-        if (!ytProcess.killed) {
-          try { ytProcess.kill(); } catch (_) {}
-        }
-      });
-    }
-
-    runDownload(true);
-    return;
+    req.on('close', () => {
+      if (!ytProcess.killed) {
+        try { ytProcess.kill('SIGKILL'); } catch (_) {}
+      }
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+    });
 
     return;
   }
