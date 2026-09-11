@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { spawn, execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -46,19 +47,21 @@ const cfProcess = spawn(CLOUDFLARED_PATH, ['tunnel', '--edge-ip-version', '4', '
 let registered = false;
 let currentTunnelUrl = null;
 
+const bridgeName = process.env.BRIDGE_NAME || (process.platform === 'win32' ? 'Home PC' : 'Termux Phone');
+
 function registerWithRender(tunnelUrl) {
   currentTunnelUrl = tunnelUrl;
   if (!registered) {
     console.log(`\n======================================================`);
     console.log(`🎉 Cloudflare Tunnel Established: ${tunnelUrl}`);
-    console.log(`📡 Registering bridge URL with Render bot (${RENDER_BOT_URL})...`);
+    console.log(`📡 Registering bridge "${bridgeName}" with Render bot (${RENDER_BOT_URL})...`);
     console.log(`======================================================\n`);
   }
 
   fetch(`${RENDER_BOT_URL}/api/register-bridge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: tunnelUrl })
+    body: JSON.stringify({ url: tunnelUrl, name: bridgeName })
   })
     .then(r => r.json())
     .then(data => {
@@ -79,7 +82,7 @@ setInterval(() => {
     fetch(`${RENDER_BOT_URL}/api/register-bridge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: currentTunnelUrl })
+      body: JSON.stringify({ url: currentTunnelUrl, name: bridgeName })
     }).catch(() => {});
   }
 }, 60000);
