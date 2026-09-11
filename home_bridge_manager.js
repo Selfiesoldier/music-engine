@@ -40,14 +40,11 @@ const bridgeProcess = spawn('node', [BRIDGE_SCRIPT], {
   stdio: 'inherit'
 });
 
-// 2. Start Cloudflare Tunnel pointing to local port 8888 (force IPv4 edge to avoid Termux IPv6 DNS issues)
-const cfProcess = spawn(CLOUDFLARED_PATH, ['tunnel', '--edge-ip-version', '4', '--url', 'http://127.0.0.1:8888'], {
-  cwd: __dirname,
-  stdio: ['ignore', 'pipe', 'pipe']
-});
-
 let registered = false;
 let currentTunnelUrl = null;
+let cfProcess = null;
+let isShuttingDown = false;
+let reconnectTimer = null;
 
 const bridgeName = process.env.BRIDGE_NAME || (process.platform === 'win32' ? 'Home PC' : 'Termux Phone');
 
@@ -89,35 +86,62 @@ setInterval(() => {
   }
 }, 60000);
 
-function handleOutput(data) {
-  const text = data.toString();
-  process.stdout.write(text);
+function startTunnel() {
+  if (isShuttingDown) return;
+  registered = false;
+  currentTunnelUrl = null;
 
-  // Match https://[subdomain].trycloudflare.com (exclude api.trycloudflare.com)
-  const match = text.match(/https:\/\/([a-zA-Z0-9-]+)\.trycloudflare\.com/);
-  if (match && match[1] !== 'api' && !registered) {
-    registerWithRender(match[0]);
+  console.log('📡 Requesting Cloudflare Quick Tunnel (http2/IPv4)...');
+
+  // --protocol http2 forces TCP port 443 (avoids UDP/QUIC drops on mobile networks)
+  // --edge-ip-version 4 forces IPv4 (avoids Termux IPv6 routing timeouts)
+  cfProcess = spawn(CLOUDFLARED_PATH, [
+    'tunnel',
+    '--protocol', 'http2',
+    '--edge-ip-version', '4',
+    '--url', 'http://127.0.0.1:8888'
+  ], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  function handleOutput(data) {
+    const text = data.toString();
+    process.stdout.write(text);
+
+    // Match https://[subdomain].trycloudflare.com (exclude api.trycloudflare.com)
+    const match = text.match(/https:\/\/([a-zA-Z0-9-]+)\.trycloudflare\.com/);
+    if (match && match[1] !== 'api' && !registered) {
+      registerWithRender(match[0]);
+    }
   }
+
+  cfProcess.stdout.on('data', handleOutput);
+  cfProcess.stderr.on('data', handleOutput);
+
+  cfProcess.on('close', (code) => {
+    if (isShuttingDown) return;
+    console.log(`⚠️ Cloudflare tunnel disconnected (exit code ${code}). Reconnecting in 3 seconds...`);
+    reconnectTimer = setTimeout(startTunnel, 3000);
+  });
 }
 
-cfProcess.stdout.on('data', handleOutput);
-cfProcess.stderr.on('data', handleOutput);
-
-cfProcess.on('close', (code) => {
-  console.log(`Cloudflare tunnel exited with code ${code}`);
-  bridgeProcess.kill();
-  process.exit(code || 0);
-});
+// Start initial tunnel
+startTunnel();
 
 bridgeProcess.on('close', (code) => {
+  if (isShuttingDown) return;
   console.log(`Bridge server exited with code ${code}`);
-  cfProcess.kill();
+  isShuttingDown = true;
+  if (cfProcess) cfProcess.kill();
   process.exit(code || 0);
 });
 
 process.on('SIGINT', () => {
   console.log('\nStopping Residential Bridge...');
+  isShuttingDown = true;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
   bridgeProcess.kill();
-  cfProcess.kill();
+  if (cfProcess) cfProcess.kill();
   process.exit(0);
 });
