@@ -1,4 +1,6 @@
-import 'dotenv/config';
+try {
+  await import('dotenv/config');
+} catch (_) {}
 import { spawn, execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';

@@ -4,21 +4,16 @@ echo "  Highrise Musicbot - Home Residential Audio Bridge"
 echo "  (Termux / PRoot Linux / Android / Raspberry Pi)"
 echo "========================================================"
 
-# Check node
-if ! command -v node &> /dev/null; then
-    echo "❌ Node.js is not installed. Run: pkg install nodejs"
-    exit 1
-fi
-
-# Check yt-dlp
-if ! command -v yt-dlp &> /dev/null && [ ! -f "./yt-dlp" ]; then
-    echo "⚠️ yt-dlp not found in PATH. Installing via curl..."
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp
-    chmod +x yt-dlp
-fi
-
-# In Termux, install the native cloudflared package built for Android Bionic DNS
+# In Termux, auto-install missing prerequisites
 if command -v pkg &> /dev/null; then
+    if ! command -v node &> /dev/null; then
+        echo "📦 Installing Node.js..."
+        pkg install -y nodejs
+    fi
+    if ! command -v yt-dlp &> /dev/null; then
+        echo "📦 Installing yt-dlp and Python..."
+        pkg install -y yt-dlp python
+    fi
     # Ensure Termux has working DNS servers for Go binaries like cloudflared
     if [ -n "$PREFIX" ]; then
         mkdir -p "$PREFIX/etc"
@@ -31,6 +26,19 @@ if command -v pkg &> /dev/null; then
     fi
     # Remove any generic Linux binary that might conflict
     rm -f ./cloudflared
+fi
+
+# Check node
+if ! command -v node &> /dev/null; then
+    echo "❌ Node.js is not installed. Run: pkg install nodejs -y"
+    exit 1
+fi
+
+# Check yt-dlp (fallback if not in pkg)
+if ! command -v yt-dlp &> /dev/null && [ ! -f "./yt-dlp" ]; then
+    echo "⚠️ yt-dlp not found in PATH. Installing via curl..."
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp
+    chmod +x yt-dlp
 fi
 
 # For standard Linux (non-Termux)
