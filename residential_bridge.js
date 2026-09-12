@@ -1,5 +1,5 @@
 import http from 'http';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -7,9 +7,23 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const YTDLP_PATH = process.platform === 'win32' 
-  ? path.join(__dirname, 'yt-dlp.exe') 
-  : (fs.existsSync(path.join(__dirname, 'yt-dlp')) ? path.join(__dirname, 'yt-dlp') : 'yt-dlp');
+
+function resolveYtDlp() {
+  if (process.platform === 'win32') {
+    return fs.existsSync(path.join(__dirname, 'yt-dlp.exe')) ? path.join(__dirname, 'yt-dlp.exe') : 'yt-dlp.exe';
+  }
+  // On Termux / Linux, check system PATH first (e.g. native pkg install yt-dlp)
+  try {
+    execSync('which yt-dlp', { stdio: 'ignore' });
+    return 'yt-dlp';
+  } catch (_) {}
+  if (fs.existsSync(path.join(__dirname, 'yt-dlp'))) {
+    return path.join(__dirname, 'yt-dlp');
+  }
+  return 'yt-dlp';
+}
+
+const YTDLP_PATH = resolveYtDlp();
 const CACHE_DIR = path.join(__dirname, 'bridge_cache');
 
 if (!fs.existsSync(CACHE_DIR)) {
@@ -56,6 +70,25 @@ const server = http.createServer(async (req, res) => {
   if (reqUrl.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'ok', service: 'residential_bridge', timestamp: Date.now() }));
+  }
+
+  if (reqUrl.pathname === '/diag') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    let ytdlpVer = 'unknown';
+    try {
+      ytdlpVer = execSync(`${YTDLP_PATH} --version`, { timeout: 4000 }).toString().trim();
+    } catch (err) {
+      ytdlpVer = `FAIL: ${err.message}`;
+    }
+    return res.end(JSON.stringify({
+      status: 'ok',
+      service: 'residential_bridge',
+      ytdlpPath: YTDLP_PATH,
+      ytdlpVersion: ytdlpVer,
+      platform: process.platform,
+      arch: process.arch,
+      timestamp: Date.now()
+    }));
   }
 
   if (reqUrl.pathname === '/stream') {

@@ -30,6 +30,9 @@ if command -v pkg &> /dev/null; then
     fi
     # Remove any generic Linux binary that might conflict
     rm -f ./cloudflared
+    if command -v yt-dlp &> /dev/null; then
+        rm -f ./yt-dlp
+    fi
 fi
 
 # Check node
