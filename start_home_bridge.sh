@@ -14,15 +14,9 @@ if command -v pkg &> /dev/null; then
         echo "📦 Installing yt-dlp and Python..."
         pkg install -y yt-dlp python
     fi
-    # Ensure Termux has working DNS servers for Go binaries like cloudflared
+    # Use Android's native Bionic system DNS resolver (avoids carrier UDP 53 blocking)
     if [ -n "$PREFIX" ]; then
-        mkdir -p "$PREFIX/etc"
-        DNS1=$(getprop net.dns1 2>/dev/null)
-        if [ -n "$DNS1" ]; then
-            echo "nameserver $DNS1" > "$PREFIX/etc/resolv.conf"
-        fi
-        echo "nameserver 1.1.1.1" >> "$PREFIX/etc/resolv.conf"
-        echo "nameserver 8.8.8.8" >> "$PREFIX/etc/resolv.conf"
+        rm -f "$PREFIX/etc/resolv.conf"
     fi
     if ! command -v cloudflared &> /dev/null; then
         echo "📦 Installing native Termux cloudflared..."
