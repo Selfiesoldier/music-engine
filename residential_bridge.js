@@ -30,6 +30,14 @@ if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
+function cleanYouTubeUrl(url) {
+  const ytMatch = (url || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  if (ytMatch) {
+    return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
+  }
+  return url;
+}
+
 function getCacheKey(targetUrl) {
   const ytMatch = (targetUrl || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
   if (ytMatch) return `yt_${ytMatch[1]}`;
@@ -98,10 +106,11 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'Missing ?url= query parameter' }));
     }
 
-    const key = getCacheKey(targetUrl);
+    const cleanUrl = cleanYouTubeUrl(targetUrl);
+    const key = getCacheKey(cleanUrl);
     const cachedFile = path.join(CACHE_DIR, `${key}.m4a`);
 
-    console.log(`[Bridge] 📥 Request for: ${targetUrl}`);
+    console.log(`[Bridge] 📥 Request for: ${cleanUrl}`);
 
     // If cached and valid, stream immediately
     if (fs.existsSync(cachedFile)) {
@@ -122,15 +131,15 @@ const server = http.createServer(async (req, res) => {
     const tempFile = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.m4a`);
 
     const currentArgs = [
-      '-f', 'ba[ext=m4a]/ba/b/best',
+      '-f', 'ba[ext=m4a]/ba/ba*/bestaudio/140/251/18/b/best',
       '-o', '-',
       '--no-video',
       '--no-playlist',
       '--no-warnings',
       '--no-progress',
       '--force-ipv4',
-      '--extractor-args', 'youtube:player_client=android,web',
-      targetUrl
+      '--extractor-args', 'youtube:player_client=android,web,tv',
+      cleanUrl
     ];
 
     console.log(`[Bridge] 🚀 Streaming track via residential IP (real-time direct mode)...`);
