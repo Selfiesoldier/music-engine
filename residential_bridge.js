@@ -118,28 +118,53 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // Download audio directly via residential IP (NO COOKIES to eliminate timeout races & reload errors)
+    // Stream audio in real-time directly to HTTP response (NO COOKIES, fast android/web client)
     const tempFile = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.m4a`);
 
     const currentArgs = [
-      '-f', 'ba[ext=m4a]/ba[ext=webm]/bestaudio/ba/b/best',
-      '-o', tempFile,
+      '-f', 'ba[ext=m4a]/ba/b/best',
+      '-o', '-',
       '--no-video',
       '--no-playlist',
       '--no-warnings',
+      '--no-progress',
       '--force-ipv4',
-      '--extractor-args', 'youtube:player_client=android,web,tv,visionos',
+      '--extractor-args', 'youtube:player_client=android,web',
       targetUrl
     ];
 
-    console.log(`[Bridge] 🚀 Downloading original track via residential IP (clean direct mode, no cookies)...`);
+    console.log(`[Bridge] 🚀 Streaming track via residential IP (real-time direct mode)...`);
 
     const ytProcess = spawn(YTDLP_PATH, currentArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let errBuffer = '';
     ytProcess.stderr.on('data', (d) => { errBuffer += d.toString(); });
 
+    let firstChunk = true;
+    let cacheStream = fs.createWriteStream(tempFile);
+    let totalBytes = 0;
+
+    ytProcess.stdout.on('data', (chunk) => {
+      if (firstChunk) {
+        firstChunk = false;
+        res.writeHead(200, {
+          'Content-Type': 'audio/mp4',
+          'Cache-Control': 'public, max-age=86400',
+          'X-Bridge-Source': 'residential-direct-stream'
+        });
+      }
+      totalBytes += chunk.length;
+      res.write(chunk);
+      if (cacheStream && !cacheStream.destroyed) {
+        cacheStream.write(chunk);
+      }
+    });
+
     ytProcess.on('close', (code, signal) => {
-      if (code !== 0 || !fs.existsSync(tempFile)) {
+      if (cacheStream) {
+        try { cacheStream.end(); } catch (_) {}
+      }
+
+      if (firstChunk) {
         console.error(`[Bridge] ❌ Download failed (code ${code}, signal ${signal}): ${errBuffer.slice(0, 200)}`);
         try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
         if (!res.headersSent) {
@@ -149,31 +174,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Rename temp file to cached file
-      try {
-        fs.renameSync(tempFile, cachedFile);
-      } catch (_) {}
+      res.end();
 
-      const fileToStream = fs.existsSync(cachedFile) ? cachedFile : tempFile;
-      const stats = fs.statSync(fileToStream);
-
-      pruneBridgeCache();
-
-      console.log(`[Bridge] ✅ Completed download (${(stats.size / 1024 / 1024).toFixed(2)} MB). Streaming to bot server...`);
-      if (!res.headersSent) {
-        res.writeHead(200, {
-          'Content-Type': 'audio/mp4',
-          'Content-Length': stats.size,
-          'Cache-Control': 'public, max-age=86400',
-          'X-Bridge-Source': 'residential-direct'
-        });
-        fs.createReadStream(fileToStream).pipe(res);
+      if (code === 0 && totalBytes > 50000) {
+        try {
+          fs.renameSync(tempFile, cachedFile);
+          pruneBridgeCache();
+          console.log(`[Bridge] ✅ Completed stream & cached (${(totalBytes / 1024 / 1024).toFixed(2)} MB): ${targetUrl}`);
+        } catch (_) {}
+      } else {
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
       }
     });
 
     req.on('close', () => {
       if (!ytProcess.killed) {
         try { ytProcess.kill('SIGKILL'); } catch (_) {}
+      }
+      if (cacheStream && !cacheStream.destroyed) {
+        try { cacheStream.destroy(); } catch (_) {}
       }
       try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
     });
