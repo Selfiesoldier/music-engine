@@ -27,6 +27,8 @@ if (process.platform !== 'win32' && fs.existsSync(path.join(__dirname, 'yt-dlp')
 
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 const CACHE_DIR = path.join(__dirname, 'bridge_cache');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+const DASHBOARD_HTML_PATH = path.join(__dirname, '../../src', 'admin_dashboard.html');
 const PORT = parseInt(process.env.SERVER_PORT || process.env.PORT || 30191, 10);
 const MAX_CONCURRENT_DOWNLOADS = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS, 10) || 1;
 
@@ -234,6 +236,42 @@ async function performBridgeDownload(key, targetUrl) {
   });
 }
 
+
+// ==========================================
+// 📋 CIRCULAR LOG BUFFER (last 200 events)
+// ==========================================
+const LOG_BUFFER = [];
+const LOG_MAX = 200;
+
+function classifyLog(msg) {
+  if (/✅|success|cached|served|HIT/i.test(msg)) return 'success';
+  if (/❌|error|fail|FAIL/i.test(msg)) return 'error';
+  if (/⏳|queued|queue|waiting/i.test(msg)) return 'warn';
+  if (/⚡|cache HIT|instant/i.test(msg)) return 'cache';
+  if (/📥|incoming|request|client/i.test(msg)) return 'info';
+  return 'default';
+}
+
+function addLog(msg) {
+  const now = new Date();
+  const time = now.toTimeString().slice(0, 8);
+  LOG_BUFFER.push({ time, msg: String(msg), type: classifyLog(msg) });
+  if (LOG_BUFFER.length > LOG_MAX) LOG_BUFFER.shift();
+}
+
+const _origLog = console.log.bind(console);
+const _origErr = console.error.bind(console);
+const _origWarn = console.warn.bind(console);
+console.log = (...args) => { const m = args.join(' '); addLog(m); _origLog(m); };
+console.error = (...args) => { const m = args.join(' '); addLog(m); _origErr(m); };
+console.warn = (...args) => { const m = args.join(' '); addLog(m); _origWarn(m); };
+
+function checkAdminAuth(req) {
+  const auth = req.headers['authorization'] || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  return token === ADMIN_PASSWORD;
+}
+
 const server = http.createServer(async (req, res) => {
   // CORS & Multi-Host headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -398,8 +436,104 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Endpoint not found', availableEndpoints: ['/health', '/clients', '/diag', '/stream?url=...'] }));
+  
+  // ── Admin Dashboard ────────────────────────────────────────────────
+  if (reqUrl.pathname === '/dashboard') {
+    try {
+      let html = fs.readFileSync(DASHBOARD_HTML_PATH, 'utf8');
+      html = html.replace('ADMIN_PASSWORD_PLACEHOLDER', ADMIN_PASSWORD);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      return res.end('Dashboard HTML not found: ' + e.message);
+    }
+  }
+
+  // ── Live Logs ──────────────────────────────────────────────────────
+  if (reqUrl.pathname === '/logs') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ entries: LOG_BUFFER.slice().reverse() }, null, 2));
+  }
+
+  // ── Cache File List ────────────────────────────────────────────────
+  if (reqUrl.pathname === '/cache-files') {
+    try {
+      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.m4a') && !f.includes('.temp.'));
+      let totalBytes = 0;
+      const fileList = [];
+      const now = Date.now();
+      for (const f of files) {
+        try {
+          const st = fs.statSync(path.join(CACHE_DIR, f));
+          totalBytes += st.size;
+          fileList.push({ name: f, sizeMB: (st.size / 1024 / 1024).toFixed(2), ageMin: Math.round((now - st.mtimeMs) / 60000) });
+        } catch (_) {}
+      }
+      fileList.sort((a, b) => a.ageMin - b.ageMin);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ totalFiles: fileList.length, totalMB: (totalBytes / 1024 / 1024).toFixed(1), maxMB: 300, files: fileList.slice(0, 100) }, null, 2));
+    } catch (e) { res.writeHead(500); return res.end(JSON.stringify({ error: e.message })); }
+  }
+
+  // ── Admin: Update Config ──────────────────────────────────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/config') {
+    if (!checkAdminAuth(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => {
+      try {
+        const cfg = JSON.parse(body);
+        if (cfg.maxConcurrent) {
+          MAX_CONCURRENT_DOWNLOADS = Math.max(1, Math.min(10, parseInt(cfg.maxConcurrent)));
+          console.log(`⚙️ [Admin] Max concurrent updated to ${MAX_CONCURRENT_DOWNLOADS}`);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, maxConcurrent: MAX_CONCURRENT_DOWNLOADS }));
+      } catch (e) { res.writeHead(400); res.end(JSON.stringify({ error: e.message })); }
+    });
+    return;
+  }
+
+  // ── Admin: Clear Cache ────────────────────────────────────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/clear-cache') {
+    if (!checkAdminAuth(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
+    try {
+      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.m4a') && !f.includes('.temp.'));
+      let freed = 0, count = 0;
+      for (const f of files) {
+        const fp = path.join(CACHE_DIR, f);
+        try { const st = fs.statSync(fp); freed += st.size; fs.unlinkSync(fp); count++; } catch (_) {}
+      }
+      console.log(`🗑️ [Admin] Cache cleared: ${count} files, ${(freed/1024/1024).toFixed(1)} MB freed`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, deletedCount: count, freedMB: (freed/1024/1024).toFixed(1) }));
+    } catch (e) { res.writeHead(500); return res.end(JSON.stringify({ error: e.message })); }
+  }
+
+  // ── Admin: Drain Queue ────────────────────────────────────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/drain-queue') {
+    if (!checkAdminAuth(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
+    const drained = downloadQueue.length;
+    while (downloadQueue.length > 0) {
+      const item = downloadQueue.shift();
+      try { item.reject(new Error('Queue drained by admin')); } catch (_) {}
+    }
+    console.log(`⚡ [Admin] Queue drained: ${drained} requests rejected`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, drained }));
+  }
+
+  // ── Admin: Force GC ───────────────────────────────────────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/gc') {
+    if (!checkAdminAuth(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
+    try { if (typeof global.gc === 'function') global.gc(); } catch (_) {}
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, message: 'GC hint sent' }));
+  }
+
+res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Endpoint not found', availableEndpoints: ['/dashboard', '/health', '/clients', '/logs', '/cache-files', '/diag', '/stream?url=...'] }));
 });
 
 server.listen(PORT, '0.0.0.0', () => {
