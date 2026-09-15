@@ -10,7 +10,8 @@ const __dirname = path.dirname(__filename);
 
 import fs from 'fs';
 
-const RENDER_BOT_URL = process.env.BOT_SERVER_URL || process.env.RENDER_BOT_URL || 'http://92.118.206.4:30191';
+const rawBotUrls = process.env.BOT_SERVER_URLS || process.env.BOT_SERVER_URL || process.env.RENDER_BOT_URL || 'http://92.118.206.166:30139';
+const BOT_SERVER_URLS = rawBotUrls.split(',').map(u => u.trim()).filter(Boolean);
 
 function getCloudflaredPath() {
   if (process.platform === 'win32') {
@@ -50,39 +51,38 @@ const bridgeName = process.env.BRIDGE_NAME || (process.platform === 'win32' ? 'H
 
 function registerWithRender(tunnelUrl) {
   currentTunnelUrl = tunnelUrl;
-  if (!registered) {
-    console.log(`\n======================================================`);
-    console.log(`🎉 Cloudflare Tunnel Established: ${tunnelUrl}`);
-    console.log(`📡 Registering bridge "${bridgeName}" with Render bot (${RENDER_BOT_URL})...`);
-    console.log(`======================================================\n`);
-  }
+  console.log(`\n======================================================`);
+  console.log(`🎉 Cloudflare Tunnel Established: ${tunnelUrl}`);
+  console.log(`📡 Registering bridge "${bridgeName}" with ${BOT_SERVER_URLS.length} client bot server(s)...`);
+  console.log(`======================================================\n`);
 
-  fetch(`${RENDER_BOT_URL}/api/register-bridge`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: tunnelUrl, name: bridgeName })
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (!registered) {
-        registered = true;
-        console.log(`✅ Bridge successfully registered with Render:`, data);
-        console.log(`🎵 Highrise bot will now fetch 100% of YouTube tracks via your residential IP!\n`);
-      }
-    })
-    .catch(err => {
-      console.warn(`⚠️ Failed to register bridge automatically: ${err.message}`);
-    });
-}
-
-// Keep-alive heartbeat every 60s
-setInterval(() => {
-  if (currentTunnelUrl && registered) {
-    fetch(`${RENDER_BOT_URL}/api/register-bridge`, {
+  BOT_SERVER_URLS.forEach(botUrl => {
+    fetch(`${botUrl}/api/register-bridge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: currentTunnelUrl, name: bridgeName })
-    }).catch(() => {});
+      body: JSON.stringify({ url: tunnelUrl, name: bridgeName })
+    })
+      .then(r => r.json())
+      .then(data => {
+        console.log(`✅ Bridge successfully registered with client [${botUrl}]:`, data);
+      })
+      .catch(err => {
+        console.warn(`⚠️ Failed to register bridge with client [${botUrl}]: ${err.message}`);
+      });
+  });
+  registered = true;
+}
+
+// Keep-alive heartbeat every 60s to all client servers
+setInterval(() => {
+  if (currentTunnelUrl && registered) {
+    BOT_SERVER_URLS.forEach(botUrl => {
+      fetch(`${botUrl}/api/register-bridge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: currentTunnelUrl, name: bridgeName })
+      }).catch(() => {});
+    });
   }
 }, 60000);
 

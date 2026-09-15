@@ -57,4 +57,8 @@ if ! command -v cloudflared &> /dev/null && [ ! -f "./cloudflared" ]; then
 fi
 
 echo "🚀 Starting bridge manager..."
+if [ -z "$BOT_SERVER_URLS" ]; then
+    export BOT_SERVER_URLS="http://92.118.206.166:30139"
+fi
 node home_bridge_manager.js
+
