@@ -1,0 +1,13 @@
+{
+  "name": "heavencloud-music-bridge",
+  "version": "1.0.0",
+  "description": "High-speed 24/7 audio bridge for Highrise Music Bot",
+  "main": "residential_bridge.js",
+  "type": "module",
+  "scripts": {
+    "start": "node residential_bridge.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

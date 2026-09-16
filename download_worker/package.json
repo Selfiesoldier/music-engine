@@ -1,0 +1,13 @@
+{
+  "name": "highrise-download-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Dedicated Audio Download & Extraction Worker for Highrise Music Engine",
+  "main": "worker.js",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
