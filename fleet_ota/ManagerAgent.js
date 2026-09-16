@@ -166,7 +166,7 @@ class ManagerAgent {
                     ownerUsername: payload.ownerUsername,
                     customPrefix: payload.customPrefix,
                     forceActivate: true,
-                    isRemoteDeploy: false
+                    isRemoteDeploy: true
                 });
 
                 console.log(`[ManagerAgent] ✅ Bot for "${payload.customerId}" deployed and activated on this node!`);
@@ -174,7 +174,7 @@ class ManagerAgent {
                     id,
                     type: 'DEPLOY_BOT_ACK',
                     success: true,
-                    rental: deployResult.rental
+                    rental: (deployResult?.rental || deployResult)
                 });
             } catch (err) {
                 console.error(`[ManagerAgent] ❌ Deployment failed for "${payload.customerId}":`, err.message);
