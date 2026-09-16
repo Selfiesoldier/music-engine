@@ -124,12 +124,24 @@ class CeoHub {
                     activeBots: Array.isArray(msg.activeBots) ? msg.activeBots : []
                 };
 
-                // Two-Way Sync: Keep CEO fleet ledger updated with active bots running on this remote manager
+                // Two-Way Sync & Offline Tombstone Reconciliation:
                 if (Array.isArray(msg.activeRentals) && msg.activeRentals.length > 0) {
                     let changed = false;
                     for (const remoteR of msg.activeRentals) {
                         const key = remoteR.rentalId || `${remoteR.customerId}_${remoteR.roomId}_${remoteR.botType}`;
                         const existing = this.fleetManager.rentals.get(key);
+
+                        // 1. RECONCILIATION: Check if this bot was terminated/deleted on the CEO while Manager was offline!
+                        const isTombstoned = this.fleetManager.tombstones && (this.fleetManager.tombstones.has(key) || this.fleetManager.tombstones.has(remoteR.customerId));
+                        const isTerminatedOnCeo = existing && (existing.status === 'deleted' || existing.status === 'terminated' || existing.status === 'admin_deleted' || existing.status === 'expired');
+
+                        if (isTombstoned || isTerminatedOnCeo) {
+                            console.log(`[CeoHub] 🛑 Manager "${mgr.info?.name || msg.nodeId}" is running bot "${key}" which was terminated while manager was offline! Enforcing kill directive...`);
+                            this.terminateBot(msg.nodeId, key, 'offline_reconciliation_kill').catch(() => {});
+                            continue;
+                        }
+
+                        // 2. Normal Auto-Sync: import active rental into CEO ledger
                         if (!existing || existing.status !== 'active') {
                             remoteR.nodeId = msg.nodeId;
                             remoteR.nodeName = mgr.info?.name || msg.nodeId;
