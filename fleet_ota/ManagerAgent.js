@@ -113,6 +113,11 @@ class ManagerAgent {
                     roomId: r.roomId,
                     pid: r.pid,
                     uptimeSeconds: r.startedAt ? Math.round((Date.now() - r.startedAt) / 1000) : 0
+                })),
+                activeRentals: activeRentals.map(r => ({
+                    ...r,
+                    status: 'active',
+                    isRunning: true
                 }))
             };
             this._send(payload);

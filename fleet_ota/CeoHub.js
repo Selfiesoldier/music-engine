@@ -123,6 +123,27 @@ class CeoHub {
                     totalMemMB: Number(msg.totalMemMB) || 0,
                     activeBots: Array.isArray(msg.activeBots) ? msg.activeBots : []
                 };
+
+                // Two-Way Sync: Keep CEO fleet ledger updated with active bots running on this remote manager
+                if (Array.isArray(msg.activeRentals) && msg.activeRentals.length > 0) {
+                    let changed = false;
+                    for (const remoteR of msg.activeRentals) {
+                        const key = remoteR.rentalId || `${remoteR.customerId}_${remoteR.roomId}_${remoteR.botType}`;
+                        const existing = this.fleetManager.rentals.get(key);
+                        if (!existing || existing.status !== 'active') {
+                            remoteR.nodeId = msg.nodeId;
+                            remoteR.nodeName = mgr.info?.name || msg.nodeId;
+                            remoteR.status = 'active';
+                            remoteR.isRunning = true;
+                            this.fleetManager.rentals.set(key, remoteR);
+                            changed = true;
+                            console.log(`[CeoHub] 🔄 Re-synced active bot "${key}" from Manager "${mgr.info?.name || msg.nodeId}" into CEO fleet ledger`);
+                        }
+                    }
+                    if (changed) {
+                        this.fleetManager._saveRentals();
+                    }
+                }
             }
             return;
         }
