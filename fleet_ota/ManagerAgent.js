@@ -188,6 +188,14 @@ class ManagerAgent {
             return;
         }
 
+        // 2.5 CEO Command: TERMINATE_ALL
+        if (msg.type === 'TERMINATE_ALL') {
+            console.log(`[ManagerAgent] 🛑 Received CEO command to TERMINATE ALL bots on this node (Reason: ${msg.payload?.reason})...`);
+            this.fleetManager.terminateAllRentals(msg.payload?.reason || 'ceo_terminate_all');
+            this._send({ id: msg.id, type: 'TERMINATE_ALL_ACK', success: true });
+            return;
+        }
+
         // 3. CEO Command: TERMINATE_BOT
         if (msg.type === 'TERMINATE_BOT') {
             const { id, payload } = msg;
