@@ -18,13 +18,15 @@ class PythonRuntime {
             return 'python';
         }
 
+        // 1. Prefer local standalone Python in ./python/bin/python3 if it exists
         const localPython = path.join(baseDir, 'python', 'bin', 'python3');
         if (fs.existsSync(localPython)) {
             return localPython;
         }
 
+        // 2. Check if system python3 has pip
         try {
-            execSync('python3 --version', { stdio: 'ignore' });
+            execSync('python3 -m pip --version', { stdio: 'ignore' });
             return 'python3';
         } catch (_) {}
 
@@ -63,17 +65,28 @@ class PythonRuntime {
             }
         }
 
-        // Linux check
-        try {
-            execSync(`"${pythonBin}" --version`, { stdio: 'ignore' });
-            console.log(`[PythonRuntime] Python binary found and operational: ${pythonBin}`);
-        } catch (_) {
-            needsStandalone = true;
+        // Linux check: Verify both python3 AND pip are working
+        if (fs.existsSync(localPythonBin)) {
+            try {
+                const ver = execSync(`"${localPythonBin}" --version`, { encoding: 'utf-8' }).trim();
+                console.log(`[PythonRuntime] Using standalone Python: ${ver}`);
+                pythonBin = localPythonBin;
+            } catch (_) {
+                needsStandalone = true;
+            }
+        } else {
+            try {
+                // Must have both python3 AND pip
+                execSync('python3 -m pip --version', { stdio: 'ignore' });
+                console.log('[PythonRuntime] Host system Python & Pip verified.');
+            } catch (_) {
+                console.log('[PythonRuntime] ⚠️ Host system Python is missing pip or incomplete. Switching to Standalone Python...');
+                needsStandalone = true;
+            }
         }
 
         if (needsStandalone) {
-            console.log('[PythonRuntime] ⚠️ No system Python found on host.');
-            console.log('[PythonRuntime] ⬇️ Downloading Standalone Portable Python 3.11 for Linux container...');
+            console.log('[PythonRuntime] ⬇️ Downloading Standalone Portable Python 3.11 with Pip built-in...');
 
             const tarPath = path.join(baseDir, 'python-standalone.tar.gz');
             await PythonRuntime._downloadFile(STANDALONE_PYTHON_LINUX_URL, tarPath);
@@ -93,6 +106,9 @@ class PythonRuntime {
 
             if (fs.existsSync(localPythonBin)) {
                 try { fs.chmodSync(localPythonBin, 0o755); } catch (_) {}
+                if (fs.existsSync(localPipBin)) {
+                    try { fs.chmodSync(localPipBin, 0o755); } catch (_) {}
+                }
                 const ver = execSync(`"${localPythonBin}" --version`, { encoding: 'utf-8' }).trim();
                 console.log(`[PythonRuntime] ✅ Standalone Python successfully installed: ${ver}`);
                 pythonBin = localPythonBin;
@@ -101,14 +117,13 @@ class PythonRuntime {
             }
         }
 
-        const reqs = requirementsPath || path.join(baseDir, 'hrBotV2', 'requirements.txt');
+        const reqs = requirementsPath || path.join(baseDir, 'musicbot', 'requirements.txt');
         if (fs.existsSync(reqs)) {
             const installedFlag = path.join(localPythonDir, '.deps_installed');
 
             if (!fs.existsSync(installedFlag)) {
                 console.log(`[PythonRuntime] 📦 Installing Python requirements from ${reqs}...`);
                 try {
-                    const pipBin = isWin ? 'pip' : (fs.existsSync(localPipBin) ? localPipBin : 'pip3');
                     execSync(`"${pythonBin}" -m pip install --no-cache-dir -r "${reqs}"`, {
                         stdio: 'inherit',
                         env: {
@@ -116,10 +131,12 @@ class PythonRuntime {
                             PATH: `${path.join(localPythonDir, 'bin')}:${process.env.PATH || ''}`
                         }
                     });
-                    fs.writeFileSync(installedFlag, new Date().toISOString(), 'utf-8');
+                    if (fs.existsSync(localPythonDir)) {
+                        fs.writeFileSync(installedFlag, new Date().toISOString(), 'utf-8');
+                    }
                     console.log('[PythonRuntime] ✅ Python dependencies installed successfully.');
                 } catch (pipErr) {
-                    console.error('[PythonRuntime] ⚠️ Pip install warning/error:', pipErr.message);
+                    console.error('[PythonRuntime] ⚠️ Pip install error:', pipErr.message);
                 }
             } else {
                 console.log('[PythonRuntime] ✅ Python dependencies already satisfied (cached).');
