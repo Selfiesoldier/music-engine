@@ -155,6 +155,64 @@ class ManagerAgent {
             return;
         }
 
+        // UPDATE_MUSIC_SERVER: CEO forwards new audio server IP/URL to worker
+        if (msg.type === 'UPDATE_MUSIC_SERVER') {
+            const { id, payload } = msg;
+            const { rentalId, musicApiUrl } = payload || {};
+            console.log(`[ManagerAgent] 🎵 Received CEO command to UPDATE_MUSIC_SERVER for rental "${rentalId}" -> ${musicApiUrl}`);
+
+            try {
+                let rental = this.fleetManager.rentals.get(rentalId);
+                if (!rental) {
+                    for (const r of this.fleetManager.rentals.values()) {
+                        if (r.rentalId === rentalId || r.roomId === rentalId) {
+                            rental = r;
+                            break;
+                        }
+                    }
+                }
+
+                if (rental) {
+                    rental.musicApiUrl = musicApiUrl;
+                    this.fleetManager._saveRentals();
+                    if (rental.tenantDir && fs.existsSync(rental.tenantDir)) {
+                        const envPath = path.join(rental.tenantDir, '.env');
+                        if (fs.existsSync(envPath)) {
+                            let envContent = fs.readFileSync(envPath, 'utf-8');
+                            if (envContent.includes('MUSIC_API_URL=')) {
+                                envContent = envContent.replace(/MUSIC_API_URL=.*/, `MUSIC_API_URL=${musicApiUrl}`);
+                            } else {
+                                envContent += `\nMUSIC_API_URL=${musicApiUrl}\n`;
+                            }
+                            fs.writeFileSync(envPath, envContent, 'utf-8');
+                        }
+                    }
+                    this.fleetManager.restartRental(rental.rentalId);
+                    this._send({
+                        type: 'RESPONSE',
+                        id,
+                        success: true,
+                        message: `Updated music server for ${rentalId} and restarted process.`
+                    });
+                } else {
+                    this._send({
+                        type: 'RESPONSE',
+                        id,
+                        success: false,
+                        error: `Rental "${rentalId}" not found on this worker node.`
+                    });
+                }
+            } catch (err) {
+                this._send({
+                    type: 'RESPONSE',
+                    id,
+                    success: false,
+                    error: err.message
+                });
+            }
+            return;
+        }
+
         // 2. CEO Command: DEPLOY_BOT
         if (msg.type === 'DEPLOY_BOT') {
             const { id, payload } = msg;

@@ -270,6 +270,12 @@ class CeoHub {
     /**
      * CEO Command: Fetch real-time logs from a remote Manager
      */
+
+    async updateMusicServer(nodeId, rentalId, musicApiUrl) {
+        console.log(`[CeoHub] 🎵 Dispatching UPDATE_MUSIC_SERVER for "${rentalId}" to Manager [${nodeId}] (${musicApiUrl})...`);
+        return await this._sendCommand(nodeId, 'UPDATE_MUSIC_SERVER', { rentalId, musicApiUrl }, 15000);
+    }
+
     async getLogs(nodeId, rentalId, lines = 100) {
         return await this._sendCommand(nodeId, 'GET_LOGS', { rentalId, lines }, 10000);
     }
