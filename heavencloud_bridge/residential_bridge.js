@@ -1666,7 +1666,6 @@ const server = http.createServer(async (req, res) => {
 
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
   const clientId = getClientIdentifier(req, reqUrl);
-  trackClientEvent(clientId, 'request');
 
   if (reqUrl.pathname === '/' || reqUrl.pathname === '/health') {
     const mem = process.memoryUsage();
@@ -1818,6 +1817,54 @@ const server = http.createServer(async (req, res) => {
   }
 
   
+  // ── Sync Cache Endpoint ──────────────────────────────────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/sync-cache') {
+    const rawTitle = req.headers['x-track-title'] ? decodeURIComponent(req.headers['x-track-title']) : '';
+    const rawArtist = req.headers['x-track-artist'] ? decodeURIComponent(req.headers['x-track-artist']) : '';
+    const duration = req.headers['x-track-duration'] || '';
+    const videoId = req.headers['x-track-videoid'] || '';
+    const source = (req.headers['x-track-source'] || 'youtube').toLowerCase();
+    const rawAliases = req.headers['x-track-aliases'] ? decodeURIComponent(req.headers['x-track-aliases']) : '';
+
+    let aliases = [];
+    try { aliases = JSON.parse(rawAliases); } catch (_) { if (rawAliases) aliases = rawAliases.split(','); }
+
+    const key = videoId ? `yt_${videoId}` : `track_${Date.now()}`;
+    const finalPath = path.join(CACHE_DIR, `${key}.m4a`);
+
+    const tempFile = path.join(CACHE_DIR, `temp_sync_${Date.now()}.tmp`);
+    const writeStream = fs.createWriteStream(tempFile);
+    req.pipe(writeStream);
+
+    writeStream.on('finish', async () => {
+      try {
+        const stats = fs.statSync(tempFile);
+        if (stats.size > 50000) {
+          try { if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath); } catch (_) {}
+          fs.renameSync(tempFile, finalPath);
+          registerTrackInCache(key, source, rawTitle, rawArtist, duration, videoId, aliases, stats.size);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, status: 'synced', key }));
+        } else {
+          try { fs.unlinkSync(tempFile); } catch (_) {}
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'File too small' }));
+        }
+      } catch (e) {
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+
+    writeStream.on('error', () => {
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Upload failed' }));
+    });
+    return;
+  }
+
   // ── Admin Dashboard ────────────────────────────────────────────────
   if (reqUrl.pathname === '/dashboard') {
     try {
@@ -1913,9 +1960,10 @@ const server = http.createServer(async (req, res) => {
   }
 
 res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Endpoint not found', availableEndpoints: ['/dashboard', '/health', '/clients', '/logs', '/cache-files', '/diag', '/stream?url=...'] }));
+  res.end(JSON.stringify({ error: 'Endpoint not found', availableEndpoints: ['/dashboard', '/sync-cache', '/health', '/clients', '/logs', '/cache-files', '/diag', '/stream?url=...'] }));
 });
 
+loadCacheIndex();
 server.listen(PORT, '0.0.0.0', () => {
   console.log('======================================================');
   console.log(`🚀 Multi-Client HeavenCloud Audio Bridge running on port ${PORT}`);

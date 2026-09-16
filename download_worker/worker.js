@@ -43,6 +43,150 @@ const CACHE_DIR = path.join(__dirname, 'cache');
 const MAX_CACHED_TRACKS = parseInt(process.env.MAX_CACHE_TRACKS, 10) || 100;
 const MAX_CACHE_SIZE_BYTES = (parseInt(process.env.MAX_CACHE_MB, 10) || 400) * 1024 * 1024;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+
+// =========================================================================
+// 🗄️ SMART CACHE INDEX & QUALITY HIERARCHY (YouTube Master > SoundCloud)
+// =========================================================================
+const CACHE_INDEX_FILE = path.join(CACHE_DIR, 'cache_index.json');
+const cacheIndex = new Map();
+
+function loadCacheIndex() {
+  try {
+    if (fs.existsSync(CACHE_INDEX_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CACHE_INDEX_FILE, 'utf8'));
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item && item.key) cacheIndex.set(item.key, item);
+        }
+      }
+      console.log(`🗄️ [Worker Index] Loaded ${cacheIndex.size} indexed tracks from cache_index.json`);
+    }
+  } catch (e) {
+    console.warn(`⚠️ [Worker Index] Failed to load cache_index.json: ${e.message}`);
+  }
+}
+
+let saveIndexTimer = null;
+function saveCacheIndex() {
+  if (saveIndexTimer) return;
+  saveIndexTimer = setTimeout(async () => {
+    saveIndexTimer = null;
+    try {
+      const data = Array.from(cacheIndex.values());
+      await fs.promises.writeFile(CACHE_INDEX_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (_) {}
+  }, 1000);
+}
+
+function normalizeTitleForIndex(str = '') {
+  return String(str)
+    .toLowerCase()
+    .replace(/^scsearch\d*:/i, '')
+    .replace(/^(?:video\s*song|full\s*video|official\s*video|audio\s*song)\s*[-:]\s*/i, '')
+    .replace(/[#|/].*$/g, '')
+    .replace(/[\[\(].*?[\)\]]/g, '')
+    .replace(/\b(official|music video|official video|video song|full song|lyrics|hd|4k)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 40);
+}
+
+function findCachedTrack(targetUrl, title = '', artist = '') {
+  const directKey = getCacheKey(targetUrl);
+  const directFile = path.join(CACHE_DIR, `${directKey}.m4a`);
+
+  // 1. Direct key file match
+  if (fs.existsSync(directFile)) {
+    try {
+      const st = fs.statSync(directFile);
+      if (st.size > 50000) {
+        const item = cacheIndex.get(directKey) || { 
+          key: directKey, 
+          filename: `${directKey}.m4a`, 
+          source: directKey.startsWith('yt_') ? 'youtube' : 'soundcloud' 
+        };
+        return { hit: true, file: directFile, size: st.size, source: item.source || 'unknown', key: directKey, item };
+      }
+    } catch (_) {}
+  }
+
+  // 2. Search alias / Title match (maps incoming SoundCloud search to cached YouTube Master)
+  const normQuery = normalizeTitleForIndex(title || targetUrl);
+  if (normQuery.length >= 4) {
+    // Check YouTube master tracks first (Quality priority: YouTube > SoundCloud)
+    for (const item of cacheIndex.values()) {
+      if (item.source === 'youtube' && item.filename) {
+        const full = path.join(CACHE_DIR, item.filename);
+        if (fs.existsSync(full)) {
+          const normItem = normalizeTitleForIndex(item.title);
+          const aliasMatch = item.aliases && item.aliases.some(a => normalizeTitleForIndex(a) === normQuery);
+          if (aliasMatch || (normItem && (normItem === normQuery || normItem.includes(normQuery) || normQuery.includes(normItem)))) {
+            try {
+              const st = fs.statSync(full);
+              if (st.size > 50000) {
+                return { hit: true, file: full, size: st.size, source: 'youtube', key: item.key, title: item.title, artist: item.artist, item };
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    }
+
+    // Secondary: check if a SoundCloud cached track matches
+    for (const item of cacheIndex.values()) {
+      if (item.source !== 'youtube' && item.filename) {
+        const full = path.join(CACHE_DIR, item.filename);
+        if (fs.existsSync(full)) {
+          const normItem = normalizeTitleForIndex(item.title);
+          if (normItem && (normItem === normQuery || normItem.includes(normQuery) || normQuery.includes(normItem))) {
+            try {
+              const st = fs.statSync(full);
+              if (st.size > 50000) {
+                return { hit: true, file: full, size: st.size, source: 'soundcloud', key: item.key, title: item.title, artist: item.artist, item };
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  }
+
+  return { hit: false };
+}
+
+function registerTrackInCache(key, source, title, artist, duration, videoId, aliases = [], size = 0) {
+  const existing = cacheIndex.get(key);
+  if (existing) {
+    // Quality Hierarchy: YouTube > SoundCloud
+    if (existing.source === 'youtube' && source === 'soundcloud') {
+      console.log(`🛡️ [Worker Priority] Retaining YouTube master for "${existing.title}". Ignoring incoming SoundCloud download.`);
+      return { action: 'rejected_kept_youtube', existing };
+    }
+    if (existing.source === 'youtube' && source === 'youtube') {
+      console.log(`ℹ️ [Worker Priority] Track already exists in YouTube quality: "${existing.title}".`);
+      return { action: 'already_exists_youtube', existing };
+    }
+    if (existing.source === 'soundcloud' && source === 'youtube') {
+      console.log(`⚡ [Worker Priority] Upgrading track "${existing.title}" from SoundCloud to YouTube master quality!`);
+    }
+  }
+
+  const record = {
+    key,
+    filename: `${key}.m4a`,
+    source: source || (key.startsWith('yt_') ? 'youtube' : 'soundcloud'),
+    title: title || (existing && existing.title) || key,
+    artist: artist || (existing && existing.artist) || 'Unknown Artist',
+    duration: duration || (existing && existing.duration) || 'Unknown',
+    videoId: videoId || (existing && existing.videoId) || (key.startsWith('yt_') ? key.replace('yt_', '') : null),
+    aliases: Array.from(new Set([...(existing ? existing.aliases || [] : []), ...(aliases || [])])),
+    size,
+    updatedAt: Date.now()
+  };
+
+  cacheIndex.set(key, record);
+  saveCacheIndex();
+  return { action: 'saved', record };
+}
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1827,7 +1971,6 @@ const server = http.createServer(async (req, res) => {
 
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
   const clientId = getClientIdentifier(req, reqUrl);
-  trackClientEvent(clientId, 'request');
 
   // Multi-Client Health Check
   if (reqUrl.pathname === '/health') {
@@ -1882,31 +2025,31 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'Missing ?url= parameter' }));
     }
 
+    const reqTitle = reqUrl.searchParams.get('title') || '';
+    const reqArtist = reqUrl.searchParams.get('artist') || '';
+    const reqDuration = parseInt(reqUrl.searchParams.get('duration') || '0', 10);
     const key = getCacheKey(targetUrl);
-    const cachedFile = path.join(CACHE_DIR, `${key}.m4a`);
 
-    console.log(`[Worker] 📥 Incoming request from [Client: ${clientId}] for: "${targetUrl}"`);
+    console.log(`[Worker] 📥 Incoming stream request from [Client: ${clientId}] for: "${targetUrl}"`);
+    trackClientEvent(clientId, 'request');
 
-    // 1. Instant Cache Hit (0% CPU, 0s delay)
-    if (fs.existsSync(cachedFile)) {
-      try {
-        const stats = fs.statSync(cachedFile);
-        if (stats.size > 50000) {
-          console.log(`[Worker] ⚡ Cache HIT for [Client: ${clientId}] (${(stats.size / 1024 / 1024).toFixed(2)} MB): ${key}.m4a`);
-          trackClientEvent(clientId, 'cacheHit');
-          totalDownloadsServed++;
-          try { fs.utimesSync(cachedFile, new Date(), new Date()); } catch (_) {}
+    // 1. Instant Cache Hit with Quality Hierarchy (Checks YT Master & Aliases)
+    const cacheLookup = findCachedTrack(targetUrl, reqTitle, reqArtist);
+    if (cacheLookup.hit && cacheLookup.file && fs.existsSync(cacheLookup.file)) {
+      console.log(`[Worker] ⚡ Cache HIT [${cacheLookup.source.toUpperCase()}] for [Client: ${clientId}] (${(cacheLookup.size / 1024 / 1024).toFixed(2)} MB): ${path.basename(cacheLookup.file)}`);
+      trackClientEvent(clientId, 'cacheHit');
+      totalDownloadsServed++;
+      try { fs.utimesSync(cacheLookup.file, new Date(), new Date()); } catch (_) {}
 
-          res.writeHead(200, {
-            'Content-Type': 'audio/mp4',
-            'Content-Length': stats.size,
-            'Cache-Control': 'public, max-age=86400',
-            'X-Worker-Cache': 'HIT',
-            'X-Worker-Client': clientId
-          });
-          return fs.createReadStream(cachedFile).pipe(res);
-        }
-      } catch (_) {}
+      res.writeHead(200, {
+        'Content-Type': 'audio/mp4',
+        'Content-Length': cacheLookup.size,
+        'Cache-Control': 'public, max-age=86400',
+        'X-Worker-Cache': 'HIT',
+        'X-Worker-Source': cacheLookup.source.toUpperCase(),
+        'X-Worker-Client': clientId
+      });
+      return fs.createReadStream(cacheLookup.file).pipe(res);
     }
 
     // 2. In-Flight Coalescing (If another client server is already downloading this song)
@@ -1942,6 +2085,9 @@ const server = http.createServer(async (req, res) => {
 
     if (result.success && result.cachedFile && fs.existsSync(result.cachedFile)) {
       trackClientEvent(clientId, 'download');
+      const dlSource = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be') ? 'youtube' : 'soundcloud';
+      const ytMatch = targetUrl.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+      registerTrackInCache(key, dlSource, reqTitle, reqArtist, reqDuration ? String(reqDuration) : 'Unknown', ytMatch ? ytMatch[1] : null, [targetUrl], result.size);
       res.writeHead(200, {
         'Content-Type': 'audio/mp4',
         'Content-Length': result.size,
@@ -1962,6 +2108,69 @@ const server = http.createServer(async (req, res) => {
         details: result.error || 'Unknown error'
       }));
     }
+    return;
+  }
+
+  // ── Sync Cache Endpoint (Main Server -> Worker Cache) ─────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/sync-cache') {
+    const rawTitle = req.headers['x-track-title'] ? decodeURIComponent(req.headers['x-track-title']) : '';
+    const rawArtist = req.headers['x-track-artist'] ? decodeURIComponent(req.headers['x-track-artist']) : '';
+    const duration = req.headers['x-track-duration'] || '';
+    const videoId = req.headers['x-track-videoid'] || '';
+    const source = (req.headers['x-track-source'] || 'youtube').toLowerCase();
+    const rawAliases = req.headers['x-track-aliases'] ? decodeURIComponent(req.headers['x-track-aliases']) : '';
+
+    let aliases = [];
+    try { aliases = JSON.parse(rawAliases); } catch (_) { if (rawAliases) aliases = rawAliases.split(','); }
+
+    const key = videoId ? `yt_${videoId}` : getCacheKey(rawTitle || reqUrl.searchParams.get('url') || 'track');
+    const finalPath = path.join(CACHE_DIR, `${key}.m4a`);
+
+    // Quality check before receiving: if YouTube master already exists, don't overwrite with SoundCloud
+    const existing = cacheIndex.get(key);
+    if (existing && existing.source === 'youtube' && source === 'soundcloud') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      req.resume(); // drain stream
+      return res.end(JSON.stringify({ ok: true, status: 'rejected', reason: 'already_have_youtube_master' }));
+    }
+
+    const tempFile = path.join(CACHE_DIR, `temp_sync_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.tmp`);
+    const writeStream = fs.createWriteStream(tempFile);
+
+    req.pipe(writeStream);
+
+    writeStream.on('finish', async () => {
+      try {
+        const stats = fs.statSync(tempFile);
+        if (stats.size > 50000) {
+          try { if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath); } catch (_) {}
+          fs.renameSync(tempFile, finalPath);
+
+          const result = registerTrackInCache(key, source, rawTitle, rawArtist, duration, videoId, aliases, stats.size);
+          console.log(`📥 [CacheSync] Successfully stored [${source.toUpperCase()}] "${rawTitle || key}" (${(stats.size/1024/1024).toFixed(2)} MB)`);
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, status: 'synced', action: result.action, key }));
+        } else {
+          try { fs.unlinkSync(tempFile); } catch (_) {}
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'File payload too small' }));
+        }
+      } catch (e) {
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+
+    writeStream.on('error', (err) => {
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+
     return;
   }
 
@@ -2074,10 +2283,11 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     error: 'Not found',
-    availableEndpoints: ['/dashboard', '/health', '/clients', '/logs', '/cache-files', '/ping', '/stream?url=...']
+    availableEndpoints: ['/dashboard', '/sync-cache', '/health', '/clients', '/logs', '/cache-files', '/ping', '/stream?url=...']
   }));
 });
 
+loadCacheIndex();
 server.listen(PORT, '0.0.0.0', () => {
   console.log('======================================================');
   console.log(`🚀 Multi-Client Dedicated Audio Download Worker running on port ${PORT}`);

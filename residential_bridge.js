@@ -1411,6 +1411,112 @@ function toast(msg, type = 'info') {
 const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || 8888, 10);
 const MAX_CONCURRENT_DOWNLOADS = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS, 10) || 1;
 
+// =========================================================================
+// 🗄️ SMART CACHE INDEX & QUALITY HIERARCHY (YouTube Master > SoundCloud)
+// =========================================================================
+const CACHE_INDEX_FILE = path.join(CACHE_DIR, 'cache_index.json');
+const cacheIndex = new Map();
+
+function loadCacheIndex() {
+  try {
+    if (fs.existsSync(CACHE_INDEX_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CACHE_INDEX_FILE, 'utf8'));
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item && item.key) cacheIndex.set(item.key, item);
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+let saveIndexTimer = null;
+function saveCacheIndex() {
+  if (saveIndexTimer) return;
+  saveIndexTimer = setTimeout(async () => {
+    saveIndexTimer = null;
+    try {
+      const data = Array.from(cacheIndex.values());
+      await fs.promises.writeFile(CACHE_INDEX_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (_) {}
+  }, 1000);
+}
+
+function normalizeTitleForIndex(str = '') {
+  return String(str)
+    .toLowerCase()
+    .replace(/^scsearch\d*:/i, '')
+    .replace(/^(?:video\s*song|full\s*video|official\s*video|audio\s*song)\s*[-:]\s*/i, '')
+    .replace(/[#|/].*$/g, '')
+    .replace(/[\[\(].*?[\)\]]/g, '')
+    .replace(/\b(official|music video|official video|video song|full song|lyrics|hd|4k)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 40);
+}
+
+function findCachedTrack(targetUrl, title = '', artist = '') {
+  const ytMatch = (targetUrl || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  const directKey = ytMatch ? `yt_${ytMatch[1]}` : `track_${crypto.createHash('md5').update((targetUrl || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 'unknown').digest('hex').slice(0, 16)}`;
+  const directFile = path.join(CACHE_DIR, `${directKey}.m4a`);
+
+  if (fs.existsSync(directFile)) {
+    try {
+      const st = fs.statSync(directFile);
+      if (st.size > 50000) {
+        const item = cacheIndex.get(directKey) || { key: directKey, filename: `${directKey}.m4a`, source: directKey.startsWith('yt_') ? 'youtube' : 'soundcloud' };
+        return { hit: true, file: directFile, size: st.size, source: item.source || 'unknown', key: directKey };
+      }
+    } catch (_) {}
+  }
+
+  const normQuery = normalizeTitleForIndex(title || targetUrl);
+  if (normQuery.length >= 4) {
+    for (const item of cacheIndex.values()) {
+      if (item.source === 'youtube' && item.filename) {
+        const full = path.join(CACHE_DIR, item.filename);
+        if (fs.existsSync(full)) {
+          const normItem = normalizeTitleForIndex(item.title);
+          const aliasMatch = item.aliases && item.aliases.some(a => normalizeTitleForIndex(a) === normQuery);
+          if (aliasMatch || (normItem && (normItem === normQuery || normItem.includes(normQuery) || normQuery.includes(normItem)))) {
+            try {
+              const st = fs.statSync(full);
+              if (st.size > 50000) {
+                return { hit: true, file: full, size: st.size, source: 'youtube', key: item.key, title: item.title, artist: item.artist };
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  }
+
+  return { hit: false };
+}
+
+function registerTrackInCache(key, source, title, artist, duration, videoId, aliases = [], size = 0) {
+  const existing = cacheIndex.get(key);
+  if (existing && existing.source === 'youtube' && source === 'soundcloud') {
+    return { action: 'rejected_kept_youtube', existing };
+  }
+
+  const record = {
+    key,
+    filename: `${key}.m4a`,
+    source: source || (key.startsWith('yt_') ? 'youtube' : 'soundcloud'),
+    title: title || (existing && existing.title) || key,
+    artist: artist || (existing && existing.artist) || 'Unknown Artist',
+    duration: duration || (existing && existing.duration) || 'Unknown',
+    videoId: videoId || (existing && existing.videoId) || null,
+    aliases: Array.from(new Set([...(existing ? existing.aliases || [] : []), ...(aliases || [])])),
+    size,
+    updatedAt: Date.now()
+  };
+
+  cacheIndex.set(key, record);
+  saveCacheIndex();
+  return { action: 'saved', record };
+}
+
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
@@ -1673,7 +1779,6 @@ const server = http.createServer(async (req, res) => {
 
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
   const clientId = getClientIdentifier(req, reqUrl);
-  trackClientEvent(clientId, 'request');
 
   // Health check with multi-client & concurrency stats
   if (reqUrl.pathname === '/health' || reqUrl.pathname === '/') {
@@ -1820,6 +1925,54 @@ const server = http.createServer(async (req, res) => {
   }
 
   
+  // ── Sync Cache Endpoint ──────────────────────────────────────────
+  if (req.method === 'POST' && reqUrl.pathname === '/sync-cache') {
+    const rawTitle = req.headers['x-track-title'] ? decodeURIComponent(req.headers['x-track-title']) : '';
+    const rawArtist = req.headers['x-track-artist'] ? decodeURIComponent(req.headers['x-track-artist']) : '';
+    const duration = req.headers['x-track-duration'] || '';
+    const videoId = req.headers['x-track-videoid'] || '';
+    const source = (req.headers['x-track-source'] || 'youtube').toLowerCase();
+    const rawAliases = req.headers['x-track-aliases'] ? decodeURIComponent(req.headers['x-track-aliases']) : '';
+
+    let aliases = [];
+    try { aliases = JSON.parse(rawAliases); } catch (_) { if (rawAliases) aliases = rawAliases.split(','); }
+
+    const key = videoId ? `yt_${videoId}` : `track_${Date.now()}`;
+    const finalPath = path.join(CACHE_DIR, `${key}.m4a`);
+
+    const tempFile = path.join(CACHE_DIR, `temp_sync_${Date.now()}.tmp`);
+    const writeStream = fs.createWriteStream(tempFile);
+    req.pipe(writeStream);
+
+    writeStream.on('finish', async () => {
+      try {
+        const stats = fs.statSync(tempFile);
+        if (stats.size > 50000) {
+          try { if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath); } catch (_) {}
+          fs.renameSync(tempFile, finalPath);
+          registerTrackInCache(key, source, rawTitle, rawArtist, duration, videoId, aliases, stats.size);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, status: 'synced', key }));
+        } else {
+          try { fs.unlinkSync(tempFile); } catch (_) {}
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'File too small' }));
+        }
+      } catch (e) {
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+
+    writeStream.on('error', () => {
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Upload failed' }));
+    });
+    return;
+  }
+
   // ── Admin Dashboard ────────────────────────────────────────────────
   if (reqUrl.pathname === '/dashboard') {
     try {
@@ -1915,9 +2068,10 @@ const server = http.createServer(async (req, res) => {
   }
 
 res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Endpoint not found', availableEndpoints: ['/dashboard', '/health', '/clients', '/logs', '/cache-files', '/diag', '/stream?url=...'] }));
+  res.end(JSON.stringify({ error: 'Endpoint not found', availableEndpoints: ['/dashboard', '/sync-cache', '/health', '/clients', '/logs', '/cache-files', '/diag', '/stream?url=...'] }));
 });
 
+loadCacheIndex();
 server.listen(PORT, '0.0.0.0', () => {
   console.log('======================================================');
   console.log(`🚀 Multi-Client Residential Audio Bridge running on port ${PORT}`);
