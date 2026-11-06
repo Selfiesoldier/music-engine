@@ -58,7 +58,7 @@ fi
 
 echo "🚀 Starting bridge manager..."
 if [ -z "$BOT_SERVER_URLS" ]; then
-    export BOT_SERVER_URLS="http://92.118.206.166:30139"
+    export BOT_SERVER_URLS="http://2.56.246.119:30195"
 fi
 node home_bridge_manager.js
 
