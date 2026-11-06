@@ -1664,10 +1664,13 @@ async function performBridgeDownload(key, cleanUrl) {
 
   const tempTemplate = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.%(ext)s`);
   const currentArgs = [
-    '-f', 'ba[ext=m4a]/ba/ba*/bestaudio/140/251/18/b/best',
+    // Prioritize 140 (AAC 44.1kHz native) so FFmpeg skips expensive 48kHz->44.1kHz resampling
+    '-f', '140/ba[ext=m4a]/ba[acodec^=mp4a]/ba/bestaudio/best',
     '-x',
     '--audio-format', 'mp3',
     '--audio-quality', '96K',
+    // Ultra-fast LAME conversion: -compression_level 0 (fastest algorithm, cuts transcode from 20s to 2s) & limit to 2 threads
+    '--postprocessor-args', 'ExtractAudio:-threads 2 -compression_level 0',
     '--no-video',
     '--no-playlist',
     '--no-warnings',
@@ -1842,6 +1845,7 @@ const server = http.createServer(async (req, res) => {
       '-i', googleUrl,
       '-c:a', 'libmp3lame',
       '-b:a', '96k',
+      '-compression_level', '0',
       '-ar', '44100',
       '-ac', '2',
       '-write_xing', '0',
