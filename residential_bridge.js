@@ -1673,7 +1673,12 @@ async function performBridgeDownload(key, cleanUrl) {
     '--no-warnings',
     '--no-progress',
     '--force-ipv4',
-    '--extractor-args', 'youtube:player_client=android,web,tv',
+    '--geo-bypass',
+    '--socket-timeout', '15',
+    '--retries', '3',
+    '--fragment-retries', '3',
+    '--max-filesize', '60M',
+    '--extractor-args', 'youtube:player_client=ios,android',
     '-o', tempTemplate,
     cleanUrl
   ];
@@ -1684,10 +1689,10 @@ async function performBridgeDownload(key, cleanUrl) {
 
     const timeoutTimer = setTimeout(() => {
       if (!settled && proc) {
-        console.error(`[Bridge] ⚠️ Download timed out after 45s for: ${cleanUrl}`);
+        console.error(`[Bridge] ⚠️ Download timed out after 75s for: ${cleanUrl}`);
         try { proc.kill('SIGKILL'); } catch (_) {}
       }
-    }, 45000);
+    }, 75000);
 
     try {
       proc = spawn(YTDLP_PATH, currentArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
