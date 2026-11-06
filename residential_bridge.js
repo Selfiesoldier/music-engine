@@ -1457,13 +1457,15 @@ function normalizeTitleForIndex(str = '') {
 function findCachedTrack(targetUrl, title = '', artist = '') {
   const ytMatch = (targetUrl || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
   const directKey = ytMatch ? `yt_${ytMatch[1]}` : `track_${crypto.createHash('md5').update((targetUrl || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 'unknown').digest('hex').slice(0, 16)}`;
-  const directFile = path.join(CACHE_DIR, `${directKey}.m4a`);
+  const directMp3 = path.join(CACHE_DIR, `${directKey}.mp3`);
+  const directM4a = path.join(CACHE_DIR, `${directKey}.m4a`);
+  const directFile = fs.existsSync(directMp3) ? directMp3 : (fs.existsSync(directM4a) ? directM4a : null);
 
-  if (fs.existsSync(directFile)) {
+  if (directFile) {
     try {
       const st = fs.statSync(directFile);
       if (st.size > 50000) {
-        const item = cacheIndex.get(directKey) || { key: directKey, filename: `${directKey}.m4a`, source: directKey.startsWith('yt_') ? 'youtube' : 'soundcloud' };
+        const item = cacheIndex.get(directKey) || { key: directKey, filename: path.basename(directFile), source: directKey.startsWith('yt_') ? 'youtube' : 'soundcloud' };
         return { hit: true, file: directFile, size: st.size, source: item.source || 'unknown', key: directKey };
       }
     } catch (_) {}
@@ -1525,7 +1527,7 @@ if (!fs.existsSync(CACHE_DIR)) {
 try {
   const stale = fs.readdirSync(CACHE_DIR);
   for (const f of stale) {
-    if (f.endsWith('.temp.m4a') || f.endsWith('.part')) {
+    if (f.includes('.temp.') || f.endsWith('.part')) {
       try { fs.unlinkSync(path.join(CACHE_DIR, f)); } catch (_) {}
     }
   }
@@ -1622,22 +1624,22 @@ function getCacheKey(targetUrl) {
 function pruneBridgeCache() {
   try {
     const files = fs.readdirSync(CACHE_DIR);
-    const m4aFiles = [];
+    const audioFiles = [];
     let totalBytes = 0;
     for (const f of files) {
-      if (f.endsWith('.m4a') && !f.includes('.temp.')) {
+      if ((f.endsWith('.mp3') || f.endsWith('.m4a')) && !f.includes('.temp.')) {
         const full = path.join(CACHE_DIR, f);
         try {
           const st = fs.statSync(full);
-          m4aFiles.push({ path: full, size: st.size, mtime: st.mtimeMs });
+          audioFiles.push({ path: full, size: st.size, mtime: st.mtimeMs });
           totalBytes += st.size;
         } catch (_) {}
       }
     }
-    m4aFiles.sort((a, b) => a.mtime - b.mtime);
+    audioFiles.sort((a, b) => a.mtime - b.mtime);
     // Keep max 35 tracks or 250 MB on Termux/home machine
-    while ((m4aFiles.length > 35 || totalBytes > 250 * 1024 * 1024) && m4aFiles.length > 5) {
-      const oldest = m4aFiles.shift();
+    while ((audioFiles.length > 35 || totalBytes > 250 * 1024 * 1024) && audioFiles.length > 5) {
+      const oldest = audioFiles.shift();
       try {
         fs.unlinkSync(oldest.path);
         totalBytes -= oldest.size;
@@ -1648,8 +1650,10 @@ function pruneBridgeCache() {
 }
 
 async function performBridgeDownload(key, cleanUrl) {
-  const cachedFile = path.join(CACHE_DIR, `${key}.m4a`);
-  if (fs.existsSync(cachedFile)) {
+  const cachedMp3 = path.join(CACHE_DIR, `${key}.mp3`);
+  const cachedM4a = path.join(CACHE_DIR, `${key}.m4a`);
+  const cachedFile = fs.existsSync(cachedMp3) ? cachedMp3 : (fs.existsSync(cachedM4a) ? cachedM4a : null);
+  if (cachedFile) {
     const stats = fs.statSync(cachedFile);
     if (stats.size > 50000) {
       return { success: true, cachedFile, size: stats.size };
@@ -1658,16 +1662,19 @@ async function performBridgeDownload(key, cleanUrl) {
 
   await acquireDownloadSlot('bridge', cleanUrl);
 
-  const tempFile = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.m4a`);
+  const tempTemplate = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.%(ext)s`);
   const currentArgs = [
     '-f', 'ba[ext=m4a]/ba/ba*/bestaudio/140/251/18/b/best',
+    '-x',
+    '--audio-format', 'mp3',
+    '--audio-quality', '96K',
     '--no-video',
     '--no-playlist',
     '--no-warnings',
     '--no-progress',
     '--force-ipv4',
     '--extractor-args', 'youtube:player_client=android,web,tv',
-    '-o', tempFile,
+    '-o', tempTemplate,
     cleanUrl
   ];
 
@@ -1692,22 +1699,28 @@ async function performBridgeDownload(key, cleanUrl) {
         clearTimeout(timeoutTimer);
         releaseDownloadSlot();
 
-        if (code === 0 && fs.existsSync(tempFile)) {
-          const stats = fs.statSync(tempFile);
+        const expectedMp3 = tempTemplate.replace('%(ext)s', 'mp3');
+        const expectedM4a = tempTemplate.replace('%(ext)s', 'm4a');
+        const producedFile = fs.existsSync(expectedMp3) ? expectedMp3 : (fs.existsSync(expectedM4a) ? expectedM4a : null);
+
+        if (code === 0 && producedFile) {
+          const stats = fs.statSync(producedFile);
           if (stats.size > 50000) {
+            const finalCachedFile = producedFile.endsWith('.mp3') ? cachedMp3 : cachedM4a;
             try {
-              fs.renameSync(tempFile, cachedFile);
+              fs.renameSync(producedFile, finalCachedFile);
             } catch (_) {
-              try { fs.copyFileSync(tempFile, cachedFile); fs.unlinkSync(tempFile); } catch (_) {}
+              try { fs.copyFileSync(producedFile, finalCachedFile); fs.unlinkSync(producedFile); } catch (_) {}
             }
             pruneBridgeCache();
             totalStreamsServed++;
-            console.log(`[Bridge] ✅ Track downloaded & cached (${(stats.size / 1024 / 1024).toFixed(2)} MB): ${key}.m4a`);
-            return resolve({ success: true, cachedFile, size: stats.size });
+            console.log(`[Bridge] ✅ Track downloaded & ready (${(stats.size / 1024 / 1024).toFixed(2)} MB): ${path.basename(finalCachedFile)}`);
+            return resolve({ success: true, cachedFile: finalCachedFile, size: stats.size });
           }
         }
 
-        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        try { if (fs.existsSync(expectedMp3)) fs.unlinkSync(expectedMp3); } catch (_) {}
+        try { if (fs.existsSync(expectedM4a)) fs.unlinkSync(expectedM4a); } catch (_) {}
         console.error(`[Bridge] ❌ Download failed for "${cleanUrl}" (code ${code}): ${errBuffer.slice(-200)}`);
         return resolve({ success: false, error: errBuffer.slice(-200) || `Process exited with code ${code}` });
       });
@@ -1716,7 +1729,10 @@ async function performBridgeDownload(key, cleanUrl) {
         settled = true;
         clearTimeout(timeoutTimer);
         releaseDownloadSlot();
-        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        const expectedMp3 = tempTemplate.replace('%(ext)s', 'mp3');
+        const expectedM4a = tempTemplate.replace('%(ext)s', 'm4a');
+        try { if (fs.existsSync(expectedMp3)) fs.unlinkSync(expectedMp3); } catch (_) {}
+        try { if (fs.existsSync(expectedM4a)) fs.unlinkSync(expectedM4a); } catch (_) {}
         return resolve({ success: false, error: err.message });
       });
 
@@ -1724,7 +1740,10 @@ async function performBridgeDownload(key, cleanUrl) {
       settled = true;
       clearTimeout(timeoutTimer);
       releaseDownloadSlot();
-      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+      const expectedMp3 = tempTemplate.replace('%(ext)s', 'mp3');
+      const expectedM4a = tempTemplate.replace('%(ext)s', 'm4a');
+      try { if (fs.existsSync(expectedMp3)) fs.unlinkSync(expectedMp3); } catch (_) {}
+      try { if (fs.existsSync(expectedM4a)) fs.unlinkSync(expectedM4a); } catch (_) {}
       return resolve({ success: false, error: spawnErr.message });
     }
   });
@@ -1849,21 +1868,24 @@ const server = http.createServer(async (req, res) => {
 
     const cleanUrl = cleanYouTubeUrl(targetUrl);
     const key = getCacheKey(cleanUrl);
-    const cachedFile = path.join(CACHE_DIR, `${key}.m4a`);
+    const cachedMp3 = path.join(CACHE_DIR, `${key}.mp3`);
+    const cachedM4a = path.join(CACHE_DIR, `${key}.m4a`);
+    const cachedFile = fs.existsSync(cachedMp3) ? cachedMp3 : (fs.existsSync(cachedM4a) ? cachedM4a : null);
 
     console.log(`[Bridge] 📥 Request from [Client: ${clientId}] for: ${cleanUrl}`);
 
     // 1. Instant Cache Hit (0% CPU, 0s delay)
-    if (fs.existsSync(cachedFile)) {
+    if (cachedFile) {
       const stats = fs.statSync(cachedFile);
       if (stats.size > 50000) {
-        console.log(`[Bridge] ⚡ Serving cached file for [Client: ${clientId}] (${(stats.size / 1024 / 1024).toFixed(2)} MB)...`);
+        const isMp3 = cachedFile.endsWith('.mp3');
+        console.log(`[Bridge] ⚡ Serving cached ${isMp3 ? 'MP3' : 'M4A'} for [Client: ${clientId}] (${(stats.size / 1024 / 1024).toFixed(2)} MB)...`);
         trackClientEvent(clientId, 'cacheHit');
         totalStreamsServed++;
         try { fs.utimesSync(cachedFile, new Date(), new Date()); } catch (_) {}
 
         res.writeHead(200, {
-          'Content-Type': 'audio/mp4',
+          'Content-Type': isMp3 ? 'audio/mpeg' : 'audio/mp4',
           'Content-Length': stats.size,
           'Cache-Control': 'public, max-age=86400',
           'X-Bridge-Source': 'residential-cache',
@@ -1901,8 +1923,9 @@ const server = http.createServer(async (req, res) => {
 
     if (result.success && result.cachedFile && fs.existsSync(result.cachedFile)) {
       trackClientEvent(clientId, 'download');
+      const isMp3 = result.cachedFile.endsWith('.mp3');
       res.writeHead(200, {
-        'Content-Type': 'audio/mp4',
+        'Content-Type': isMp3 ? 'audio/mpeg' : 'audio/mp4',
         'Content-Length': result.size,
         'Cache-Control': 'public, max-age=86400',
         'X-Bridge-Source': 'residential-download',
@@ -1994,7 +2017,7 @@ const server = http.createServer(async (req, res) => {
   // ── Cache File List ────────────────────────────────────────────────
   if (reqUrl.pathname === '/cache-files') {
     try {
-      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.m4a') && !f.includes('.temp.'));
+      const files = fs.readdirSync(CACHE_DIR).filter(f => (f.endsWith('.mp3') || f.endsWith('.m4a')) && !f.includes('.temp.'));
       let totalBytes = 0;
       const fileList = [];
       const now = Date.now();
@@ -2034,7 +2057,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && reqUrl.pathname === '/clear-cache') {
     if (!checkAdminAuth(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
     try {
-      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.m4a') && !f.includes('.temp.'));
+      const files = fs.readdirSync(CACHE_DIR).filter(f => (f.endsWith('.mp3') || f.endsWith('.m4a')) && !f.includes('.temp.'));
       let freed = 0, count = 0;
       for (const f of files) {
         const fp = path.join(CACHE_DIR, f);
