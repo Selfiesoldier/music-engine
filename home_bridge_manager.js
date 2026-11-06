@@ -100,7 +100,6 @@ function startTunnel() {
     'tunnel',
     '--protocol', 'http2',
     '--edge-ip-version', '4',
-    '--dns', '1.1.1.1',
     '--url', 'http://127.0.0.1:8888'
   ];
 
