@@ -1804,6 +1804,81 @@ const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
   const clientId = getClientIdentifier(req, reqUrl);
 
+  // TTS endpoint: GET /tts?text=<text>&lang=<lang> (Offload TTS speech generation to Termux residential IP)
+  if (reqUrl.pathname === '/tts') {
+    const text = reqUrl.searchParams.get('text');
+    const lang = reqUrl.searchParams.get('lang') || 'en';
+    if (!text) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Missing ?text= parameter' }));
+    }
+
+    const ttsHash = crypto.createHash('md5').update(`tts_${lang}_${text.trim()}`).digest('hex');
+    const cachedTtsMp3 = path.join(CACHE_DIR, `tts_${ttsHash}.mp3`);
+
+    if (fs.existsSync(cachedTtsMp3)) {
+      try {
+        const stats = fs.statSync(cachedTtsMp3);
+        if (stats.size > 1000) {
+          console.log(`[Bridge] ⚡ Serving cached TTS: "${text.slice(0, 40)}..."`);
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': stats.size,
+            'Cache-Control': 'public, max-age=86400',
+            'X-Bridge-TTS': 'HIT'
+          });
+          return fs.createReadStream(cachedTtsMp3).pipe(res);
+        }
+      } catch (_) {}
+    }
+
+    const googleUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${encodeURIComponent(lang)}&client=tw-ob&q=${encodeURIComponent(text.slice(0, 200))}`;
+    const tempTtsMp3 = path.join(CACHE_DIR, `tts_${ttsHash}.${Date.now()}.temp.mp3`);
+
+    console.log(`[Bridge] 🎙️ Transcoding TTS announcement to 96kbps MP3 on Termux: "${text.slice(0, 50)}..."`);
+    const ffmpegProc = spawn('ffmpeg', [
+      '-threads', '1',
+      '-y',
+      '-i', googleUrl,
+      '-c:a', 'libmp3lame',
+      '-b:a', '96k',
+      '-ar', '44100',
+      '-ac', '2',
+      '-write_xing', '0',
+      '-id3v2_version', '0',
+      tempTtsMp3
+    ], { stdio: ['ignore', 'ignore', 'ignore'] });
+
+    const timeout = setTimeout(() => {
+      try { ffmpegProc.kill('SIGKILL'); } catch (_) {}
+    }, 10000);
+
+    ffmpegProc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0 && fs.existsSync(tempTtsMp3)) {
+        try {
+          fs.renameSync(tempTtsMp3, cachedTtsMp3);
+          const stats = fs.statSync(cachedTtsMp3);
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': stats.size,
+            'Cache-Control': 'public, max-age=86400',
+            'X-Bridge-TTS': 'MISS'
+          });
+          return fs.createReadStream(cachedTtsMp3).pipe(res);
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: err.message }));
+        }
+      } else {
+        try { if (fs.existsSync(tempTtsMp3)) fs.unlinkSync(tempTtsMp3); } catch (_) {}
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'FFmpeg TTS conversion failed on Termux' }));
+      }
+    });
+    return;
+  }
+
   // Health check with multi-client & concurrency stats
   if (reqUrl.pathname === '/health' || reqUrl.pathname === '/') {
     const mem = process.memoryUsage();
