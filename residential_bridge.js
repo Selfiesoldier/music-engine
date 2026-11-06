@@ -1669,8 +1669,8 @@ async function performBridgeDownload(key, cleanUrl) {
     '-x',
     '--audio-format', 'mp3',
     '--audio-quality', '96K',
-    // Ultra-fast LAME conversion: -compression_level 0 (fastest algorithm, cuts transcode from 20s to 2s) & limit to 2 threads
-    '--postprocessor-args', 'ExtractAudio:-threads 2 -compression_level 0',
+    // Full power phone encoding: all 8 cores (-threads 0) + fastest LAME (-compression_level 0) for sub-second conversion
+    '--postprocessor-args', 'ExtractAudio:-threads 0 -compression_level 0',
     '--no-video',
     '--no-playlist',
     '--no-warnings',
@@ -1840,7 +1840,7 @@ const server = http.createServer(async (req, res) => {
 
     console.log(`[Bridge] 🎙️ Transcoding TTS announcement to 96kbps MP3 on Termux: "${text.slice(0, 50)}..."`);
     const ffmpegProc = spawn('ffmpeg', [
-      '-threads', '1',
+      '-threads', '0',
       '-y',
       '-i', googleUrl,
       '-c:a', 'libmp3lame',
