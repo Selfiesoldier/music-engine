@@ -1922,6 +1922,86 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Transcode endpoint: POST /transcode (Re-encode arbitrary audio to 96kbps CBR MP3 on Termux)
+  if (reqUrl.pathname === '/transcode') {
+    const uniqueSession = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const tempRawInput = path.join(CACHE_DIR, `raw_trans_${uniqueSession}.raw`);
+    const tempFinalMp3 = path.join(CACHE_DIR, `final_trans_${uniqueSession}.mp3`);
+
+    const cleanUp = () => {
+      try { if (fs.existsSync(tempRawInput)) fs.unlinkSync(tempRawInput); } catch (_) {}
+      try { if (fs.existsSync(tempFinalMp3)) fs.unlinkSync(tempFinalMp3); } catch (_) {}
+    };
+
+    try {
+      if (req.method === 'POST') {
+        const fileStream = fs.createWriteStream(tempRawInput);
+        await new Promise((resolve, reject) => {
+          req.pipe(fileStream);
+          req.on('error', reject);
+          fileStream.on('finish', resolve);
+          fileStream.on('error', reject);
+        });
+      } else {
+        const sourceUrl = reqUrl.searchParams.get('url');
+        if (!sourceUrl) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Missing POST body or ?url= parameter' }));
+        }
+        const srcRes = await fetch(sourceUrl, { signal: AbortSignal.timeout(30000) });
+        if (!srcRes.ok) throw new Error(`Source audio returned HTTP ${srcRes.status}`);
+        const buf = Buffer.from(await srcRes.arrayBuffer());
+        await fs.promises.writeFile(tempRawInput, buf);
+      }
+
+      if (fs.statSync(tempRawInput).size < 1000) {
+        throw new Error('Uploaded audio payload too small');
+      }
+
+      // Transcode via Termux's single-thread FFmpeg strictly to 96kbps CBR 44.1kHz stereo MP3
+      console.log(`[Bridge] 🔄 Re-encoding audio to 96k CBR MP3 on Termux (${(fs.statSync(tempRawInput).size / 1024 / 1024).toFixed(2)} MB)...`);
+      await new Promise((resolve, reject) => {
+        const ff = spawn('ffmpeg', [
+          '-y',
+          '-threads', '1',
+          '-i', tempRawInput,
+          '-vn',
+          '-c:a', 'libmp3lame',
+          '-b:a', '96k',
+          '-ar', '44100',
+          '-ac', '2',
+          '-write_xing', '0',
+          '-id3v2_version', '0',
+          tempFinalMp3
+        ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+        let errBuf = '';
+        ff.stderr.on('data', d => errBuf += d.toString());
+        ff.on('close', code => {
+          if (code === 0 && fs.existsSync(tempFinalMp3)) resolve();
+          else reject(new Error(`FFmpeg transcode failed (code ${code}): ${errBuf.slice(-200)}`));
+        });
+        ff.on('error', reject);
+      });
+
+      const st = fs.statSync(tempFinalMp3);
+      res.writeHead(200, {
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': st.size,
+        'Cache-Control': 'no-cache'
+      });
+      const stream = fs.createReadStream(tempFinalMp3);
+      stream.pipe(res);
+      stream.on('finish', cleanUp);
+      stream.on('error', cleanUp);
+      return;
+    } catch (err) {
+      cleanUp();
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Transcode error', details: err.message }));
+    }
+  }
+
   // Health check with multi-client & concurrency stats
   if (reqUrl.pathname === '/health' || reqUrl.pathname === '/') {
     const mem = process.memoryUsage();
