@@ -1621,33 +1621,71 @@ function getCacheKey(targetUrl) {
   return crypto.createHash('md5').update(targetUrl).digest('hex');
 }
 
+const BRIDGE_MAX_SONGS = parseInt(process.env.BRIDGE_MAX_SONGS || '10', 10);
+const BRIDGE_MAX_TTS = parseInt(process.env.BRIDGE_MAX_TTS || '10', 10);
+
 function pruneBridgeCache() {
   try {
+    if (!fs.existsSync(CACHE_DIR)) return;
     const files = fs.readdirSync(CACHE_DIR);
-    const audioFiles = [];
-    let totalBytes = 0;
+    const songFiles = [];
+    const ttsFiles = [];
+
     for (const f of files) {
-      if ((f.endsWith('.mp3') || f.endsWith('.m4a')) && !f.includes('.temp.')) {
-        const full = path.join(CACHE_DIR, f);
-        try {
-          const st = fs.statSync(full);
-          audioFiles.push({ path: full, size: st.size, mtime: st.mtimeMs });
-          totalBytes += st.size;
-        } catch (_) {}
+      if (f.includes('.temp.') || f.endsWith('.tmp') || f.endsWith('.part') || f.startsWith('raw_') || f.startsWith('final_')) {
+        continue;
+      }
+
+      const full = path.join(CACHE_DIR, f);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch (_) {
+        continue;
+      }
+
+      if (f.startsWith('tts_') && f.endsWith('.mp3')) {
+        ttsFiles.push({ path: full, file: f, size: st.size, mtime: st.mtimeMs });
+      } else if (f.endsWith('.mp3') || f.endsWith('.m4a')) {
+        songFiles.push({ path: full, file: f, size: st.size, mtime: st.mtimeMs });
       }
     }
-    audioFiles.sort((a, b) => a.mtime - b.mtime);
-    // Keep max 35 tracks or 250 MB on Termux/home machine
-    while ((audioFiles.length > 35 || totalBytes > 250 * 1024 * 1024) && audioFiles.length > 5) {
-      const oldest = audioFiles.shift();
+
+    // Sort oldest first (ascending mtime)
+    songFiles.sort((a, b) => a.mtime - b.mtime);
+    ttsFiles.sort((a, b) => a.mtime - b.mtime);
+
+    let evictedSongs = 0;
+    while (songFiles.length > BRIDGE_MAX_SONGS) {
+      const oldest = songFiles.shift();
       try {
         fs.unlinkSync(oldest.path);
-        totalBytes -= oldest.size;
-        console.log(`[Bridge] 🧹 Evicted LRU cached track: ${path.basename(oldest.path)}`);
+        evictedSongs++;
+        console.log(`[Bridge] 🧹 Evicted LRU cached track: ${oldest.file}`);
       } catch (_) {}
     }
-  } catch (_) {}
+
+    let evictedTts = 0;
+    while (ttsFiles.length > BRIDGE_MAX_TTS) {
+      const oldest = ttsFiles.shift();
+      try {
+        fs.unlinkSync(oldest.path);
+        evictedTts++;
+        console.log(`[Bridge] 🧹 Evicted LRU cached TTS: ${oldest.file}`);
+      } catch (_) {}
+    }
+
+    if (evictedSongs > 0 || evictedTts > 0) {
+      console.log(`[Bridge] 🧹 Cache pruned: retaining ${songFiles.length} songs (max ${BRIDGE_MAX_SONGS}) and ${ttsFiles.length} TTS (max ${BRIDGE_MAX_TTS})`);
+    }
+  } catch (err) {
+    console.warn('[Bridge] ⚠️ Prune cache error:', err.message);
+  }
 }
+
+// Initial prune and interval check every 10 minutes
+pruneBridgeCache();
+setInterval(pruneBridgeCache, 10 * 60 * 1000);
 
 async function performBridgeDownload(key, cleanUrl) {
   const cachedMp3 = path.join(CACHE_DIR, `${key}.mp3`);
@@ -1862,6 +1900,7 @@ const server = http.createServer(async (req, res) => {
       if (code === 0 && fs.existsSync(tempTtsMp3)) {
         try {
           fs.renameSync(tempTtsMp3, cachedTtsMp3);
+          pruneBridgeCache();
           const stats = fs.statSync(cachedTtsMp3);
           res.writeHead(200, {
             'Content-Type': 'audio/mpeg',

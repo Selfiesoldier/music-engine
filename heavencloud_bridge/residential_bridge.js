@@ -1,5 +1,5 @@
 import http from 'http';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -8,24 +8,22 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Detect yt-dlp binary (local Linux binary, local Windows exe, or system path)
-const YTDLP_PATH = fs.existsSync(path.join(__dirname, 'yt-dlp'))
-  ? path.join(__dirname, 'yt-dlp')
-  : (process.platform === 'win32' && fs.existsSync(path.join(__dirname, 'yt-dlp.exe'))
-    ? path.join(__dirname, 'yt-dlp.exe')
-    : 'yt-dlp');
-
-// Automatically ensure executable permission on Linux
-if (process.platform !== 'win32' && fs.existsSync(path.join(__dirname, 'yt-dlp'))) {
-  try {
-    fs.chmodSync(path.join(__dirname, 'yt-dlp'), 0o755);
-    console.log('✅ Set executable permissions (0755) on ./yt-dlp');
-  } catch (e) {
-    console.warn('⚠️ Could not chmod ./yt-dlp:', e.message);
+function resolveYtDlp() {
+  if (process.platform === 'win32') {
+    return fs.existsSync(path.join(__dirname, 'yt-dlp.exe')) ? path.join(__dirname, 'yt-dlp.exe') : 'yt-dlp.exe';
   }
+  // On Termux / Linux, check system PATH first
+  try {
+    execSync('which yt-dlp', { stdio: 'ignore' });
+    return 'yt-dlp';
+  } catch (_) {}
+  if (fs.existsSync(path.join(__dirname, 'yt-dlp'))) {
+    return path.join(__dirname, 'yt-dlp');
+  }
+  return 'yt-dlp';
 }
 
-const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+const YTDLP_PATH = resolveYtDlp();
 const CACHE_DIR = path.join(__dirname, 'bridge_cache');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -1410,8 +1408,116 @@ function toast(msg, type = 'info') {
 </body>
 </html>
 `;
-const PORT = parseInt(process.env.SERVER_PORT || process.env.PORT || 30191, 10);
+const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || 8888, 10);
 const MAX_CONCURRENT_DOWNLOADS = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS, 10) || 1;
+
+// =========================================================================
+// 🗄️ SMART CACHE INDEX & QUALITY HIERARCHY (YouTube Master > SoundCloud)
+// =========================================================================
+const CACHE_INDEX_FILE = path.join(CACHE_DIR, 'cache_index.json');
+const cacheIndex = new Map();
+
+function loadCacheIndex() {
+  try {
+    if (fs.existsSync(CACHE_INDEX_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CACHE_INDEX_FILE, 'utf8'));
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item && item.key) cacheIndex.set(item.key, item);
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+let saveIndexTimer = null;
+function saveCacheIndex() {
+  if (saveIndexTimer) return;
+  saveIndexTimer = setTimeout(async () => {
+    saveIndexTimer = null;
+    try {
+      const data = Array.from(cacheIndex.values());
+      await fs.promises.writeFile(CACHE_INDEX_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (_) {}
+  }, 1000);
+}
+
+function normalizeTitleForIndex(str = '') {
+  return String(str)
+    .toLowerCase()
+    .replace(/^scsearch\d*:/i, '')
+    .replace(/^(?:video\s*song|full\s*video|official\s*video|audio\s*song)\s*[-:]\s*/i, '')
+    .replace(/[#|/].*$/g, '')
+    .replace(/[\[\(].*?[\)\]]/g, '')
+    .replace(/\b(official|music video|official video|video song|full song|lyrics|hd|4k)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 40);
+}
+
+function findCachedTrack(targetUrl, title = '', artist = '') {
+  const ytMatch = (targetUrl || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  const directKey = ytMatch ? `yt_${ytMatch[1]}` : `track_${crypto.createHash('md5').update((targetUrl || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 'unknown').digest('hex').slice(0, 16)}`;
+  const directMp3 = path.join(CACHE_DIR, `${directKey}.mp3`);
+  const directM4a = path.join(CACHE_DIR, `${directKey}.m4a`);
+  const directFile = fs.existsSync(directMp3) ? directMp3 : (fs.existsSync(directM4a) ? directM4a : null);
+
+  if (directFile) {
+    try {
+      const st = fs.statSync(directFile);
+      if (st.size > 50000) {
+        const item = cacheIndex.get(directKey) || { key: directKey, filename: path.basename(directFile), source: directKey.startsWith('yt_') ? 'youtube' : 'soundcloud' };
+        return { hit: true, file: directFile, size: st.size, source: item.source || 'unknown', key: directKey };
+      }
+    } catch (_) {}
+  }
+
+  const normQuery = normalizeTitleForIndex(title || targetUrl);
+  if (normQuery.length >= 4) {
+    for (const item of cacheIndex.values()) {
+      if (item.source === 'youtube' && item.filename) {
+        const full = path.join(CACHE_DIR, item.filename);
+        if (fs.existsSync(full)) {
+          const normItem = normalizeTitleForIndex(item.title);
+          const aliasMatch = item.aliases && item.aliases.some(a => normalizeTitleForIndex(a) === normQuery);
+          if (aliasMatch || (normItem && (normItem === normQuery || normItem.includes(normQuery) || normQuery.includes(normItem)))) {
+            try {
+              const st = fs.statSync(full);
+              if (st.size > 50000) {
+                return { hit: true, file: full, size: st.size, source: 'youtube', key: item.key, title: item.title, artist: item.artist };
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  }
+
+  return { hit: false };
+}
+
+function registerTrackInCache(key, source, title, artist, duration, videoId, aliases = [], size = 0) {
+  const existing = cacheIndex.get(key);
+  if (existing && existing.source === 'youtube' && source === 'soundcloud') {
+    return { action: 'rejected_kept_youtube', existing };
+  }
+
+  const record = {
+    key,
+    filename: `${key}.m4a`,
+    source: source || (key.startsWith('yt_') ? 'youtube' : 'soundcloud'),
+    title: title || (existing && existing.title) || key,
+    artist: artist || (existing && existing.artist) || 'Unknown Artist',
+    duration: duration || (existing && existing.duration) || 'Unknown',
+    videoId: videoId || (existing && existing.videoId) || null,
+    aliases: Array.from(new Set([...(existing ? existing.aliases || [] : []), ...(aliases || [])])),
+    size,
+    updatedAt: Date.now()
+  };
+
+  cacheIndex.set(key, record);
+  saveCacheIndex();
+  return { action: 'saved', record };
+}
 
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -1421,7 +1527,7 @@ if (!fs.existsSync(CACHE_DIR)) {
 try {
   const stale = fs.readdirSync(CACHE_DIR);
   for (const f of stale) {
-    if (f.endsWith('.temp.m4a') || f.endsWith('.part')) {
+    if (f.includes('.temp.') || f.endsWith('.part')) {
       try { fs.unlinkSync(path.join(CACHE_DIR, f)); } catch (_) {}
     }
   }
@@ -1433,8 +1539,8 @@ try {
 let activeDownloads = 0;
 let totalStreamsServed = 0;
 const downloadQueue = [];
-const inFlightStreams = new Map();
-const clientStats = new Map();
+const inFlightStreams = new Map(); // key -> Promise<{ success, cachedFile, size, error }>
+const clientStats = new Map(); // clientId -> { requests, cacheHits, downloads, failures, lastSeen }
 
 function getClientIdentifier(req, reqUrl) {
   const queryClient = reqUrl.searchParams.get('client') || reqUrl.searchParams.get('clientId') || reqUrl.searchParams.get('bot');
@@ -1467,7 +1573,7 @@ function trackClientEvent(clientId, eventType) {
   else if (eventType === 'failure') s.failures++;
 }
 
-function acquireDownloadSlot(clientId, targetUrl) {
+function acquireDownloadSlot(clientId, cleanUrl) {
   if (activeDownloads < MAX_CONCURRENT_DOWNLOADS) {
     activeDownloads++;
     return Promise.resolve({ queued: false, waitTimeMs: 0 });
@@ -1480,7 +1586,7 @@ function acquireDownloadSlot(clientId, targetUrl) {
   return new Promise((resolve, reject) => {
     downloadQueue.push({
       clientId,
-      targetUrl,
+      cleanUrl,
       startTime,
       resolve: () => {
         const waitTimeMs = Date.now() - startTime;
@@ -1501,109 +1607,178 @@ function releaseDownloadSlot() {
   }
 }
 
+function cleanYouTubeUrl(url) {
+  const ytMatch = (url || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  if (ytMatch) {
+    return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
+  }
+  return url;
+}
+
 function getCacheKey(targetUrl) {
+  const ytMatch = (targetUrl || '').match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  if (ytMatch) return `yt_${ytMatch[1]}`;
   return crypto.createHash('md5').update(targetUrl).digest('hex');
 }
 
+const BRIDGE_MAX_SONGS = parseInt(process.env.BRIDGE_MAX_SONGS || '10', 10);
+const BRIDGE_MAX_TTS = parseInt(process.env.BRIDGE_MAX_TTS || '10', 10);
+
 function pruneBridgeCache() {
   try {
+    if (!fs.existsSync(CACHE_DIR)) return;
     const files = fs.readdirSync(CACHE_DIR);
-    const m4aFiles = [];
-    let totalBytes = 0;
+    const songFiles = [];
+    const ttsFiles = [];
+
     for (const f of files) {
-      if (f.endsWith('.m4a') && !f.includes('.temp.')) {
-        const full = path.join(CACHE_DIR, f);
-        try {
-          const st = fs.statSync(full);
-          m4aFiles.push({ path: full, size: st.size, mtime: st.mtimeMs });
-          totalBytes += st.size;
-        } catch (_) {}
+      if (f.includes('.temp.') || f.endsWith('.tmp') || f.endsWith('.part') || f.startsWith('raw_') || f.startsWith('final_')) {
+        continue;
+      }
+
+      const full = path.join(CACHE_DIR, f);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch (_) {
+        continue;
+      }
+
+      if (f.startsWith('tts_') && f.endsWith('.mp3')) {
+        ttsFiles.push({ path: full, file: f, size: st.size, mtime: st.mtimeMs });
+      } else if (f.endsWith('.mp3') || f.endsWith('.m4a')) {
+        songFiles.push({ path: full, file: f, size: st.size, mtime: st.mtimeMs });
       }
     }
-    m4aFiles.sort((a, b) => a.mtime - b.mtime);
-    while ((m4aFiles.length > 40 || totalBytes > 300 * 1024 * 1024) && m4aFiles.length > 5) {
-      const oldest = m4aFiles.shift();
+
+    // Sort oldest first (ascending mtime)
+    songFiles.sort((a, b) => a.mtime - b.mtime);
+    ttsFiles.sort((a, b) => a.mtime - b.mtime);
+
+    let evictedSongs = 0;
+    while (songFiles.length > BRIDGE_MAX_SONGS) {
+      const oldest = songFiles.shift();
       try {
         fs.unlinkSync(oldest.path);
-        totalBytes -= oldest.size;
-        console.log(`[Bridge] 🧹 Evicted LRU cached track: ${path.basename(oldest.path)}`);
+        evictedSongs++;
+        console.log(`[Bridge] 🧹 Evicted LRU cached track: ${oldest.file}`);
       } catch (_) {}
     }
-  } catch (_) {}
+
+    let evictedTts = 0;
+    while (ttsFiles.length > BRIDGE_MAX_TTS) {
+      const oldest = ttsFiles.shift();
+      try {
+        fs.unlinkSync(oldest.path);
+        evictedTts++;
+        console.log(`[Bridge] 🧹 Evicted LRU cached TTS: ${oldest.file}`);
+      } catch (_) {}
+    }
+
+    if (evictedSongs > 0 || evictedTts > 0) {
+      console.log(`[Bridge] 🧹 Cache pruned: retaining ${songFiles.length} songs (max ${BRIDGE_MAX_SONGS}) and ${ttsFiles.length} TTS (max ${BRIDGE_MAX_TTS})`);
+    }
+  } catch (err) {
+    console.warn('[Bridge] ⚠️ Prune cache error:', err.message);
+  }
 }
 
-async function performBridgeDownload(key, targetUrl) {
-  const cachedFile = path.join(CACHE_DIR, `${key}.m4a`);
-  if (fs.existsSync(cachedFile)) {
+// Initial prune and interval check every 10 minutes
+pruneBridgeCache();
+setInterval(pruneBridgeCache, 10 * 60 * 1000);
+
+async function performBridgeDownload(key, cleanUrl) {
+  const cachedMp3 = path.join(CACHE_DIR, `${key}.mp3`);
+  const cachedM4a = path.join(CACHE_DIR, `${key}.m4a`);
+  const cachedFile = fs.existsSync(cachedMp3) ? cachedMp3 : (fs.existsSync(cachedM4a) ? cachedM4a : null);
+  if (cachedFile) {
     const stats = fs.statSync(cachedFile);
     if (stats.size > 50000) {
       return { success: true, cachedFile, size: stats.size };
     }
   }
 
-  await acquireDownloadSlot('heavencloud-bridge', targetUrl);
+  await acquireDownloadSlot('bridge', cleanUrl);
 
-  const tempFile = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.m4a`);
-  const args = [
-    '-f', 'ba[ext=m4a]/ba[ext=webm]/ba',
-    '-o', tempFile,
+  const tempTemplate = path.join(CACHE_DIR, `${key}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.temp.%(ext)s`);
+  const currentArgs = [
+    // Prioritize 140 (AAC 44.1kHz native) so FFmpeg skips expensive 48kHz->44.1kHz resampling
+    '-f', '140/ba[ext=m4a]/ba[acodec^=mp4a]/ba/bestaudio/best',
+    '-x',
+    '--audio-format', 'mp3',
+    '--audio-quality', '96K',
+    // Full power phone encoding: all 8 cores (-threads 0) + fastest LAME (-compression_level 0) for sub-second conversion
+    '--postprocessor-args', 'ExtractAudio:-threads 0 -compression_level 0',
+    '--no-video',
     '--no-playlist',
     '--no-warnings',
-    '--extractor-args', 'youtube:player_client=visionos,android'
+    '--no-progress',
+    '--force-ipv4',
+    '--geo-bypass',
+    '--socket-timeout', '15',
+    '--retries', '3',
+    '--fragment-retries', '3',
+    '--max-filesize', '60M',
+    '--extractor-args', 'youtube:player_client=ios,android',
+    '-o', tempTemplate,
+    cleanUrl
   ];
 
-  if (fs.existsSync(COOKIES_PATH)) {
-    args.push('--cookies', COOKIES_PATH);
-  }
-  args.push(targetUrl);
-
   return new Promise((resolve) => {
-    let ytProcess = null;
+    let proc = null;
     let settled = false;
 
     const timeoutTimer = setTimeout(() => {
-      if (!settled && ytProcess) {
-        console.error(`[Bridge] ⚠️ Download timed out after 45s for: ${targetUrl}`);
-        try { ytProcess.kill('SIGKILL'); } catch (_) {}
+      if (!settled && proc) {
+        console.error(`[Bridge] ⚠️ Download timed out after 75s for: ${cleanUrl}`);
+        try { proc.kill('SIGKILL'); } catch (_) {}
       }
-    }, 45000);
+    }, 75000);
 
     try {
-      ytProcess = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc = spawn(YTDLP_PATH, currentArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
       let errBuffer = '';
-      ytProcess.stderr.on('data', (d) => { errBuffer += d.toString(); });
+      proc.stderr.on('data', (d) => { errBuffer += d.toString(); });
 
-      ytProcess.on('close', (code) => {
+      proc.on('close', (code) => {
         settled = true;
         clearTimeout(timeoutTimer);
         releaseDownloadSlot();
 
-        if (code === 0 && fs.existsSync(tempFile)) {
-          const stats = fs.statSync(tempFile);
+        const expectedMp3 = tempTemplate.replace('%(ext)s', 'mp3');
+        const expectedM4a = tempTemplate.replace('%(ext)s', 'm4a');
+        const producedFile = fs.existsSync(expectedMp3) ? expectedMp3 : (fs.existsSync(expectedM4a) ? expectedM4a : null);
+
+        if (code === 0 && producedFile) {
+          const stats = fs.statSync(producedFile);
           if (stats.size > 50000) {
+            const finalCachedFile = producedFile.endsWith('.mp3') ? cachedMp3 : cachedM4a;
             try {
-              if (fs.existsSync(cachedFile)) fs.unlinkSync(cachedFile);
-              fs.renameSync(tempFile, cachedFile);
+              fs.renameSync(producedFile, finalCachedFile);
             } catch (_) {
-              try { fs.copyFileSync(tempFile, cachedFile); fs.unlinkSync(tempFile); } catch (_) {}
+              try { fs.copyFileSync(producedFile, finalCachedFile); fs.unlinkSync(producedFile); } catch (_) {}
             }
             pruneBridgeCache();
             totalStreamsServed++;
-            console.log(`[Bridge] ✅ Track downloaded & cached (${(stats.size / 1024 / 1024).toFixed(2)} MB): ${key}.m4a`);
-            return resolve({ success: true, cachedFile, size: stats.size });
+            console.log(`[Bridge] ✅ Track downloaded & ready (${(stats.size / 1024 / 1024).toFixed(2)} MB): ${path.basename(finalCachedFile)}`);
+            return resolve({ success: true, cachedFile: finalCachedFile, size: stats.size });
           }
         }
 
-        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
-        console.error(`[Bridge] ❌ Download failed (code ${code}): ${errBuffer.slice(0, 200)}`);
+        try { if (fs.existsSync(expectedMp3)) fs.unlinkSync(expectedMp3); } catch (_) {}
+        try { if (fs.existsSync(expectedM4a)) fs.unlinkSync(expectedM4a); } catch (_) {}
+        console.error(`[Bridge] ❌ Download failed for "${cleanUrl}" (code ${code}): ${errBuffer.slice(-200)}`);
         return resolve({ success: false, error: errBuffer.slice(-200) || `Process exited with code ${code}` });
       });
 
-      ytProcess.on('error', (err) => {
+      proc.on('error', (err) => {
         settled = true;
         clearTimeout(timeoutTimer);
         releaseDownloadSlot();
-        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+        const expectedMp3 = tempTemplate.replace('%(ext)s', 'mp3');
+        const expectedM4a = tempTemplate.replace('%(ext)s', 'm4a');
+        try { if (fs.existsSync(expectedMp3)) fs.unlinkSync(expectedMp3); } catch (_) {}
+        try { if (fs.existsSync(expectedM4a)) fs.unlinkSync(expectedM4a); } catch (_) {}
         return resolve({ success: false, error: err.message });
       });
 
@@ -1611,7 +1786,10 @@ async function performBridgeDownload(key, targetUrl) {
       settled = true;
       clearTimeout(timeoutTimer);
       releaseDownloadSlot();
-      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+      const expectedMp3 = tempTemplate.replace('%(ext)s', 'mp3');
+      const expectedM4a = tempTemplate.replace('%(ext)s', 'm4a');
+      try { if (fs.existsSync(expectedMp3)) fs.unlinkSync(expectedMp3); } catch (_) {}
+      try { if (fs.existsSync(expectedM4a)) fs.unlinkSync(expectedM4a); } catch (_) {}
       return resolve({ success: false, error: spawnErr.message });
     }
   });
@@ -1667,15 +1845,91 @@ const server = http.createServer(async (req, res) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
   const clientId = getClientIdentifier(req, reqUrl);
 
-  if (reqUrl.pathname === '/' || reqUrl.pathname === '/health') {
+  // TTS endpoint: GET /tts?text=<text>&lang=<lang> (Offload TTS speech generation to Termux residential IP)
+  if (reqUrl.pathname === '/tts') {
+    const text = reqUrl.searchParams.get('text');
+    const lang = reqUrl.searchParams.get('lang') || 'en';
+    if (!text) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Missing ?text= parameter' }));
+    }
+
+    const ttsHash = crypto.createHash('md5').update(`tts_${lang}_${text.trim()}`).digest('hex');
+    const cachedTtsMp3 = path.join(CACHE_DIR, `tts_${ttsHash}.mp3`);
+
+    if (fs.existsSync(cachedTtsMp3)) {
+      try {
+        const stats = fs.statSync(cachedTtsMp3);
+        if (stats.size > 1000) {
+          console.log(`[Bridge] ⚡ Serving cached TTS: "${text.slice(0, 40)}..."`);
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': stats.size,
+            'Cache-Control': 'public, max-age=86400',
+            'X-Bridge-TTS': 'HIT'
+          });
+          return fs.createReadStream(cachedTtsMp3).pipe(res);
+        }
+      } catch (_) {}
+    }
+
+    const googleUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${encodeURIComponent(lang)}&client=tw-ob&q=${encodeURIComponent(text.slice(0, 200))}`;
+    const tempTtsMp3 = path.join(CACHE_DIR, `tts_${ttsHash}.${Date.now()}.temp.mp3`);
+
+    console.log(`[Bridge] 🎙️ Transcoding TTS announcement to 96kbps MP3 on Termux: "${text.slice(0, 50)}..."`);
+    const ffmpegProc = spawn('ffmpeg', [
+      '-threads', '0',
+      '-y',
+      '-i', googleUrl,
+      '-c:a', 'libmp3lame',
+      '-b:a', '96k',
+      '-compression_level', '0',
+      '-ar', '44100',
+      '-ac', '2',
+      '-write_xing', '0',
+      '-id3v2_version', '0',
+      tempTtsMp3
+    ], { stdio: ['ignore', 'ignore', 'ignore'] });
+
+    const timeout = setTimeout(() => {
+      try { ffmpegProc.kill('SIGKILL'); } catch (_) {}
+    }, 10000);
+
+    ffmpegProc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0 && fs.existsSync(tempTtsMp3)) {
+        try {
+          fs.renameSync(tempTtsMp3, cachedTtsMp3);
+          pruneBridgeCache();
+          const stats = fs.statSync(cachedTtsMp3);
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': stats.size,
+            'Cache-Control': 'public, max-age=86400',
+            'X-Bridge-TTS': 'MISS'
+          });
+          return fs.createReadStream(cachedTtsMp3).pipe(res);
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: err.message }));
+        }
+      } else {
+        try { if (fs.existsSync(tempTtsMp3)) fs.unlinkSync(tempTtsMp3); } catch (_) {}
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'FFmpeg TTS conversion failed on Termux' }));
+      }
+    });
+    return;
+  }
+
+  // Health check with multi-client & concurrency stats
+  if (reqUrl.pathname === '/health' || reqUrl.pathname === '/') {
     const mem = process.memoryUsage();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       status: 'ok',
-      service: 'heavencloud_audio_bridge',
-      port: PORT,
-      ytdlp: YTDLP_PATH,
-      hasCookies: fs.existsSync(COOKIES_PATH),
+      service: 'residential_bridge',
+      uptimeSeconds: Math.floor(process.uptime()),
       concurrency: {
         activeDownloads,
         maxConcurrent: MAX_CONCURRENT_DOWNLOADS,
@@ -1693,6 +1947,7 @@ const server = http.createServer(async (req, res) => {
     }, null, 2));
   }
 
+  // Detailed Connected Clients Report
   if (reqUrl.pathname === '/clients') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     const clientsList = Array.from(clientStats.values()).map(c => ({
@@ -1707,32 +1962,26 @@ const server = http.createServer(async (req, res) => {
     }, null, 2));
   }
 
-  // Diagnostic endpoint to check yt-dlp binary execution
-  if (reqUrl.pathname === '/test' || reqUrl.pathname === '/diag') {
+  if (reqUrl.pathname === '/diag') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
+    let ytdlpVer = 'unknown';
     try {
-      const p = spawn(YTDLP_PATH, ['--version']);
-      let stdout = '', stderr = '';
-      p.stdout.on('data', d => stdout += d.toString());
-      p.stderr.on('data', d => stderr += d.toString());
-      p.on('error', err => {
-        res.end(JSON.stringify({ success: false, error: err.message, ytdlp: YTDLP_PATH }));
-      });
-      p.on('close', code => {
-        res.end(JSON.stringify({
-          success: code === 0,
-          code,
-          version: stdout.trim(),
-          stderr: stderr.trim(),
-          ytdlp: YTDLP_PATH
-        }));
-      });
-    } catch (e) {
-      res.end(JSON.stringify({ success: false, error: e.message }));
+      ytdlpVer = execSync(`${YTDLP_PATH} --version`, { timeout: 4000 }).toString().trim();
+    } catch (err) {
+      ytdlpVer = `FAIL: ${err.message}`;
     }
-    return;
+    return res.end(JSON.stringify({
+      status: 'ok',
+      service: 'residential_bridge',
+      ytdlpPath: YTDLP_PATH,
+      ytdlpVersion: ytdlpVer,
+      platform: process.platform,
+      arch: process.arch,
+      timestamp: Date.now()
+    }));
   }
 
+  // Stream endpoint: GET /stream?url=<targetUrl>&client=<id>
   if (reqUrl.pathname === '/stream') {
     const targetUrl = reqUrl.searchParams.get('url');
     if (!targetUrl) {
@@ -1740,38 +1989,42 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'Missing ?url= query parameter' }));
     }
 
-    const key = getCacheKey(targetUrl);
-    const cachedFile = path.join(CACHE_DIR, `${key}.m4a`);
+    const cleanUrl = cleanYouTubeUrl(targetUrl);
+    const key = getCacheKey(cleanUrl);
+    const cachedMp3 = path.join(CACHE_DIR, `${key}.mp3`);
+    const cachedM4a = path.join(CACHE_DIR, `${key}.m4a`);
+    const cachedFile = fs.existsSync(cachedMp3) ? cachedMp3 : (fs.existsSync(cachedM4a) ? cachedM4a : null);
 
-    console.log(`[Bridge] 📥 Request from [Client: ${clientId}] for: ${targetUrl}`);
+    console.log(`[Bridge] 📥 Request from [Client: ${clientId}] for: ${cleanUrl}`);
 
     // 1. Instant Cache Hit (0% CPU, 0s delay)
-    if (fs.existsSync(cachedFile)) {
+    if (cachedFile) {
       const stats = fs.statSync(cachedFile);
       if (stats.size > 50000) {
-        console.log(`[Bridge] ⚡ Serving cached file for [Client: ${clientId}] (${(stats.size / 1024 / 1024).toFixed(2)} MB)...`);
+        const isMp3 = cachedFile.endsWith('.mp3');
+        console.log(`[Bridge] ⚡ Serving cached ${isMp3 ? 'MP3' : 'M4A'} for [Client: ${clientId}] (${(stats.size / 1024 / 1024).toFixed(2)} MB)...`);
         trackClientEvent(clientId, 'cacheHit');
         totalStreamsServed++;
         try { fs.utimesSync(cachedFile, new Date(), new Date()); } catch (_) {}
 
         res.writeHead(200, {
-          'Content-Type': 'audio/mp4',
+          'Content-Type': isMp3 ? 'audio/mpeg' : 'audio/mp4',
           'Content-Length': stats.size,
           'Cache-Control': 'public, max-age=86400',
-          'X-Bridge-Source': 'heavencloud-cache',
+          'X-Bridge-Source': 'residential-cache',
           'X-Bridge-Client': clientId
         });
         return fs.createReadStream(cachedFile).pipe(res);
       }
     }
 
-    // 2. In-Flight Coalescing
+    // 2. In-Flight Coalescing (If another client server is already fetching this track)
     let streamPromise;
     if (inFlightStreams.has(key)) {
-      console.log(`[Bridge] 👥 Coalescing request for [Client: ${clientId}]: Reusing active in-flight stream for "${targetUrl}"`);
+      console.log(`[Bridge] 👥 Coalescing request for [Client: ${clientId}]: Reusing active in-flight stream for "${cleanUrl}"`);
       streamPromise = inFlightStreams.get(key);
     } else {
-      streamPromise = performBridgeDownload(key, targetUrl)
+      streamPromise = performBridgeDownload(key, cleanUrl)
         .finally(() => {
           inFlightStreams.delete(key);
         });
@@ -1793,17 +2046,18 @@ const server = http.createServer(async (req, res) => {
 
     if (result.success && result.cachedFile && fs.existsSync(result.cachedFile)) {
       trackClientEvent(clientId, 'download');
+      const isMp3 = result.cachedFile.endsWith('.mp3');
       res.writeHead(200, {
-        'Content-Type': 'audio/mp4',
+        'Content-Type': isMp3 ? 'audio/mpeg' : 'audio/mp4',
         'Content-Length': result.size,
         'Cache-Control': 'public, max-age=86400',
-        'X-Bridge-Source': 'heavencloud-direct',
+        'X-Bridge-Source': 'residential-download',
         'X-Bridge-Client': clientId
       });
       return fs.createReadStream(result.cachedFile).pipe(res);
     }
 
-    // Download failed
+    // Stream failed
     trackClientEvent(clientId, 'failure');
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -1886,7 +2140,7 @@ const server = http.createServer(async (req, res) => {
   // ── Cache File List ────────────────────────────────────────────────
   if (reqUrl.pathname === '/cache-files') {
     try {
-      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.m4a') && !f.includes('.temp.'));
+      const files = fs.readdirSync(CACHE_DIR).filter(f => (f.endsWith('.mp3') || f.endsWith('.m4a')) && !f.includes('.temp.'));
       let totalBytes = 0;
       const fileList = [];
       const now = Date.now();
@@ -1926,7 +2180,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && reqUrl.pathname === '/clear-cache') {
     if (!checkAdminAuth(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
     try {
-      const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.m4a') && !f.includes('.temp.'));
+      const files = fs.readdirSync(CACHE_DIR).filter(f => (f.endsWith('.mp3') || f.endsWith('.m4a')) && !f.includes('.temp.'));
       let freed = 0, count = 0;
       for (const f of files) {
         const fp = path.join(CACHE_DIR, f);
@@ -1966,7 +2220,7 @@ res.writeHead(404, { 'Content-Type': 'application/json' });
 loadCacheIndex();
 server.listen(PORT, '0.0.0.0', () => {
   console.log('======================================================');
-  console.log(`🚀 Multi-Client HeavenCloud Audio Bridge running on port ${PORT}`);
+  console.log(`🚀 Multi-Client Residential Audio Bridge running on port ${PORT}`);
   console.log(`🛡️ Max Concurrent Downloads: ${MAX_CONCURRENT_DOWNLOADS} (Low CPU Guarantee)`);
   console.log(`📁 Cache Directory: ${CACHE_DIR}`);
   console.log('📡 Endpoints: /health, /clients, /diag, /stream?url=<target>&client=<name>');
