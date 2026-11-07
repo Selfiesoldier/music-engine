@@ -3,7 +3,13 @@ cache/tracks/*
 cache/tts/*
 !cache/tracks/.gitkeep
 !cache/tts/.gitkeep
-.env.local
+.env
+.env.*
+!.env.example
+API_KEYS_VAULT.md
+*.vault
+cookies.txt
+*.session
 *.log
 scratch/
 *.exe
