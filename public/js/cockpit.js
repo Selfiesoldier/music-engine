@@ -191,15 +191,47 @@ class CockpitState {
   }
 
   async doLogin(password) {
+    if (!password || !password.trim()) {
+      alert('Please enter an admin password.');
+      return;
+    }
+    const cleanPass = password.trim();
     try {
-      const res = await fetch(`${this.activeRoom.endpoint}/api/auth/verify`, {
+      // 1. Try active room's /api/auth/verify endpoint
+      let res = await fetch(`${this.activeRoom.endpoint}/api/auth/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
-      });
-      const data = await res.json();
+        body: JSON.stringify({ password: cleanPass })
+      }).catch(() => null);
+
+      // 2. If endpoint returned 404 or failed, fallback to /api/login
+      if (!res || !res.ok) {
+        const fallbackRes = await fetch(`${this.activeRoom.endpoint}/api/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: cleanPass })
+        }).catch(() => null);
+        if (fallbackRes && (fallbackRes.ok || fallbackRes.status === 401)) {
+          res = fallbackRes;
+        }
+      }
+
+      if (!res) {
+        alert('Could not connect to ' + this.activeRoom.name + '. Please check server connectivity.');
+        return;
+      }
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        alert(`Authentication failed (HTTP ${res.status}): Server returned non-JSON response.`);
+        return;
+      }
+
       if (data && data.success) {
-        this.token = data.token || password;
+        this.token = data.token || cleanPass;
         localStorage.setItem('cockpit_auth_token', this.token);
         this.isAuthenticated = true;
         this.closeModal();
@@ -328,24 +360,22 @@ class CockpitState {
     }
 
     const trimmed = query.trim();
-    this.showToast(`Queuing "${trimmed}" to ${this.activeRoom.name}...`, 'info');
+    this.showToast(`Resolving & queuing "${trimmed}" to ${this.activeRoom.name}...`, 'info');
 
     try {
-      // If direct URL (YouTube, MP3, stream)
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        await this.apiReq('/api/play', 'POST', {
-          source: trimmed,
-          title: trimmed.split('/').pop().substring(0, 40) || 'Stream Audio'
-        });
-        this.showToast('Track queued successfully!', 'success');
-      } else {
-        // Dispatch search request or play command
-        await this.apiReq('/api/play', 'POST', {
-          source: `ytsearch:${trimmed}`,
-          title: trimmed
-        });
-        this.showToast(`Search queued: "${trimmed}"`, 'success');
+      // Send url, source, and q so all routers and central controller recognize it
+      const payload = {
+        url: trimmed,
+        source: trimmed,
+        q: trimmed
+      };
+      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        payload.title = trimmed;
       }
+
+      const res = await this.apiReq('/api/play', 'POST', payload);
+      const queuedName = res?.queuedTitle || res?.currentTitle || trimmed;
+      this.showToast(`✅ Queued: "${queuedName}"!`, 'success');
       setTimeout(() => this.pollFleetData(), 500);
     } catch (e) {
       this.showToast('Failed to queue: ' + e.message, 'error');
