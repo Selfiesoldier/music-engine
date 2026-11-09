@@ -182,8 +182,8 @@ export class PersistentStreamManager {
       if (!meta) continue;
 
       // If client buffer is bloated (> 64 KB = ~5.4s unread in kernel socket buffer)
-      if (client.writableLength > 64 * 1024) {
-        if (now - meta.lastSuccessfulWrite > 10000) {
+      if (client.writableLength > 256 * 1024) {
+        if (now - meta.lastSuccessfulWrite > 30000) {
           console.warn(`⚠️ [StreamManager] Removing stalled listener (${(client.writableLength / 1024).toFixed(0)} KB un-drained > 10s)`);
           this.removeClient(client);
         }
@@ -248,12 +248,16 @@ export class PersistentStreamManager {
     this.stats.totalConnections++;
 
     // Socket drain listener: when TCP buffer drains, update lastSuccessfulWrite immediately
-    res.on('drain', () => {
+    const onDrain = () => {
       const meta = this.clientMetadata.get(res);
       if (meta) {
         meta.lastSuccessfulWrite = Date.now();
       }
-    });
+    };
+    res.on('drain', onDrain);
+    if (res.socket) {
+      res.socket.on('drain', onDrain);
+    }
 
     if (this.clients.size > this.stats.peakListeners) {
       this.stats.peakListeners = this.clients.size;
@@ -362,7 +366,7 @@ export class PersistentStreamManager {
     // Stop audio player before streaming announcement to guarantee ZERO frame interleaving
     if (this.audioPlayer && this.audioPlayer.isPlaying) {
       console.log('🛑 [StreamManager] Stopping audio player before speech announcement to prevent frame collision/glitches.');
-      this.audioPlayer.stop(false, false);
+      this.audioPlayer.stop(false, false, false);
     }
 
     // Parse announcement frames directly for clean frame-level delivery
@@ -405,8 +409,10 @@ export class PersistentStreamManager {
       }
       return true;
     } finally {
-      if (this.announcementSessionId === expectedSession) {
-        this.isAnnouncing = false;
+      this.isAnnouncing = false;
+      // Always guarantee silence feed is restored if no song is actively playing!
+      if (!this.audioPlayer || !this.audioPlayer.isPlaying) {
+        this.resumeSilenceFeed();
       }
     }
   }

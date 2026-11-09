@@ -326,7 +326,7 @@ export class AudioPlayer extends EventEmitter {
     }
   }
 
-  stop(notifyFinished = false, resumeSilence = true) {
+  stop(notifyFinished = false, resumeSilence = true, stopAnnouncement = true) {
     this.isPlaying = false;
     this.playSessionId++;
 
@@ -342,7 +342,7 @@ export class AudioPlayer extends EventEmitter {
 
     this.cleanTempFiles();
 
-    if (!notifyFinished) {
+    if (!notifyFinished && stopAnnouncement) {
       this.streamManager.stopAnnouncement();
     }
 
