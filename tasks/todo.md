@@ -80,4 +80,10 @@
 ## Checkpoint 4: Deployed & Live
 - [x] Both containers serve new Admin Cockpit at `/` and `/admin`.
 - [x] All live controls operational on Ori Host servers.
+- [x] **Studio DJ Speech Synthesizer (ZERO CPU SPEECH) Fully Verified:**
+  - `POST /api/tts/speak` synthesizes via Termux Residential Bridge (96kbps CBR 44.1kHz stereo MP3).
+  - 0% CPU overhead / ZERO FFmpeg on live audio streaming nodes.
+  - Smooth music ducking/pause, frame-by-frame speech delivery to `/stream`, and seamless music resumption.
+  - Verified on Room 1 (`92.118.206.166:30238`) and Room 2 (`2.56.246.128:30289`).
+
 

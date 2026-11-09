@@ -293,7 +293,11 @@ class CockpitState {
     };
 
     const res = await fetch(`${this.activeRoom.endpoint}${endpoint}`, options);
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
   }
 
   async sendPlayback(action, extra = {}) {
@@ -355,9 +359,10 @@ class CockpitState {
       return;
     }
     try {
-      this.showToast('Dispatching DJ speech announcement...', 'info');
-      await this.apiReq('/api/tts/speak', 'POST', { text });
-      this.showToast('DJ Speech broadcasting live!', 'success');
+      this.showToast('Synthesizing speech announcement (ZERO CPU)...', 'info');
+      const res = await this.apiReq('/api/tts/speak', 'POST', { text });
+      const sec = res && res.durationMs ? Math.round(res.durationMs / 1000) : 4;
+      this.showToast(`📢 DJ Speech broadcasting live on Highrise! (~${sec}s, ZERO CPU)`, 'success');
     } catch (e) {
       this.showToast('DJ Speech failed: ' + e.message, 'error');
     }
