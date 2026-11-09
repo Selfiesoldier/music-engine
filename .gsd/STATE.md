@@ -2,24 +2,23 @@
 
 **Milestone:** Milestone 1: Production Multi-Room Streaming Fleet  
 **Phase:** Phase 7 - Upstream Speech & TTS Normalization Pipeline  
-**Status:** Ready for execution  
-**Task:** Planning complete (3 plans created across 2 waves)  
+**Status:** Wave 1 Verified (7/7 Must-Haves Passed) — Wave 2 Ready for Execution  
+**Task:** Plan 7.3 (TTS Normalization & Multi-Room Audio Fleet Deployment)  
 
-## Plans Created
-- **Plan 7.1**: Pre-Parsed Frame Array & Zero-Drift Silence Engine (Wave 1)
-- **Plan 7.2**: Clean Track EOF Frame Alignment & Burst Buffer Isolation (Wave 1)
-- **Plan 7.3**: TTS Normalization & Multi-Room Audio Fleet Deployment (Wave 2)
+## Plans Status
+- **Plan 7.1**: Pre-Parsed Frame Array & Zero-Drift Silence Engine (Wave 1) — **Completed & Verified ✅**
+- **Plan 7.2**: Clean Track EOF Frame Alignment & Burst Buffer Isolation (Wave 1) — **Completed & Verified ✅**
+- **Plan 7.3**: TTS Normalization & Multi-Room Audio Fleet Deployment (Wave 2) — **Pending Execution**
 
-## Current Context
-Phase 7 planning incorporates the empirical verifier findings:
-1. Replaced broken static 314-byte chunking with an intact pre-parsed frame array in `PersistentStreamManager`.
-2. Implemented clean EOF frame-boundary truncation in `AudioPlayer` to eliminate the track-end audio pause.
-3. Fixed in-place buffer mutation in `readBuffer` by cloning slices with `Buffer.from()`.
-4. Enforced strict 96kbps 44.1kHz CBR MPEG-1 Layer 3 parameters for speech/TTS announcements.
+## Verification Summary (Wave 1)
+- Verified report: `.gsd/phases/7/VERIFICATION.md`
+- Score: 7/7 must-haves verified empirically
+- Zero hardcoded frame lengths, dynamic ISO/IEC 11172-3 formula validated
+- Pre-parsed frame array rotation eliminates silence loop wrap-around corruption
+- `getEffectiveMp3FileSize()` cleanly trims trailing EOF partial frames and garbage
+- Memory isolation via `Buffer.from()` prevents burst buffer in-place mutations
 
 ## Next Steps
-1. `/execute 7` — Execute all Phase 7 plans with atomic commits and empirical verification.
+1. Execute Plan 7.3 (Wave 2): Harden TTS stream announcements and deploy live to Room 1 & Room 2 streaming servers.
 
-## Blockers
-None. All services operational and green.
 
