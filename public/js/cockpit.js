@@ -282,6 +282,15 @@ class CockpitState {
       const res = await fetch(`${cfg.endpoint}/api/status`, { signal: controller.signal });
       clearTimeout(timeout);
 
+      let queueData = [];
+      try {
+        const qRes = await fetch(`${cfg.endpoint}/queue?room=${roomId}`, { signal: AbortSignal.timeout(2000) });
+        if (qRes.ok) {
+          const qJson = await qRes.json();
+          queueData = qJson.queue || [];
+        }
+      } catch (_) {}
+
       if (res.ok) {
         const data = await res.json();
         const p = data.player || {};
@@ -298,7 +307,7 @@ class CockpitState {
           listeners: s.activeListeners || 0,
           burstBufferKB: s.burstBufferKB || '0',
           activeFilter: p.activeFilter || 'normal',
-          queue: data.queue || []
+          queue: queueData
         };
       } else {
         this.telemetry[roomId].healthy = false;
@@ -389,10 +398,15 @@ class CockpitState {
       return;
     }
     try {
-      this.showToast('Synthesizing speech announcement (ZERO CPU)...', 'info');
+      this.showToast('Dispatching DJ speech announcement...', 'info');
       const res = await this.apiReq('/api/tts/speak', 'POST', { text });
-      const sec = res && res.durationMs ? Math.round(res.durationMs / 1000) : 4;
-      this.showToast(`📢 DJ Speech broadcasting live on Highrise! (~${sec}s, ZERO CPU)`, 'success');
+      if (res && res.status === 'queued_next') {
+        this.showToast('🎙️ Announcement queued! Will broadcast cleanly right after current song finishes.', 'success');
+      } else {
+        const sec = res && res.durationMs ? Math.round(res.durationMs / 1000) : 4;
+        this.showToast(`📢 DJ Speech broadcasting live on Highrise! (~${sec}s, ZERO CPU)`, 'success');
+      }
+      setTimeout(() => this.pollFleetData(), 400);
     } catch (e) {
       this.showToast('DJ Speech failed: ' + e.message, 'error');
     }
@@ -488,6 +502,51 @@ class CockpitState {
     if (ramEl) ramEl.textContent = d.healthy ? 'Healthy' : 'Offline';
     if (burstEl) burstEl.textContent = d.burstBufferKB + ' KB';
     if (listenEl) listenEl.textContent = d.listeners;
+
+    // 5. Update Upcoming Queue List
+    const queueContainer = document.getElementById('queueListContainer');
+    if (queueContainer) {
+      const q = d.queue || [];
+      if (q.length === 0) {
+        queueContainer.innerHTML = `
+          <div style="text-align: center; color: var(--text-muted); padding: 24px; font-size: 13px;">
+            Queue is currently empty.<br/>Search songs above or let the silence engine flow.
+          </div>
+        `;
+      } else {
+        queueContainer.innerHTML = q.map((item, idx) => {
+          if (item.isAnnouncement) {
+            return `
+              <div class="queue-item" style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; margin-bottom:8px; border-radius:10px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3);">
+                <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                  <span style="font-size:16px;">🎙️</span>
+                  <div style="overflow:hidden;">
+                    <div style="font-weight:600; color: #38bdf8; font-size:13px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">DJ Announcement: "${item.text || item.title}"</div>
+                    <div style="font-size:11px; color:var(--text-muted);">Will broadcast cleanly right after current song finishes</div>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="preview-pill" style="background: rgba(56, 189, 248, 0.25); color: #38bdf8; font-size:10px;">NEXT #${item.position || idx + 1}</span>
+                  <button class="btn-ctrl" style="padding:4px 8px; font-size:12px;" onclick="cockpit.deleteQueueItem(${idx})">✕</button>
+                </div>
+              </div>
+            `;
+          }
+          return `
+            <div class="queue-item" style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; margin-bottom:8px; border-radius:10px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-color, #334155);">
+              <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                <span style="font-size:12px; color:var(--text-muted); font-weight:700;">#${item.position || idx + 1}</span>
+                <div style="overflow:hidden;">
+                  <div style="font-weight:600; font-size:13px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${item.title}</div>
+                  <div style="font-size:11px; color:var(--text-muted);">${item.artist || 'Unknown'} • ${item.duration || '--:--'}</div>
+                </div>
+              </div>
+              <button class="btn-ctrl" style="padding:4px 8px; font-size:12px;" onclick="cockpit.deleteQueueItem(${idx})">✕</button>
+            </div>
+          `;
+        }).join('');
+      }
+    }
 
     this.updatePreviewUI();
   }
