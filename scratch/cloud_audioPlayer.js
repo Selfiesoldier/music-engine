@@ -295,7 +295,7 @@ export class AudioPlayer extends EventEmitter {
           if (fileOffset + bytesRead > effectiveFileSize) {
             bytesRead = effectiveFileSize - fileOffset;
           }
-          const slice = bytesRead === CHUNK_SIZE ? readBuffer : readBuffer.subarray(0, bytesRead);
+          const slice = Buffer.from(readBuffer.subarray(0, bytesRead));
           this.streamManager.broadcast(slice);
           fileOffset += bytesRead;
           chunksSent++;
